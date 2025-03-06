@@ -1,0 +1,8 @@
+dataset
+opencood/logs
+opencood/__pycache__
+build
+cudnn-linux-x86_64-8.9.6.50_cuda12-archive.tar.xz
+cudnn-linux-x86_64-8.9.6.50_cuda12-archive
+spconv/build
+spconv/dist
