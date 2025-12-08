@@ -1,4 +1,4 @@
-name: HeterBaseline_DAIR_lidar_pyramid_blindmap
+name: BlindMap_DAIR_lidar_pyramid_blindmap
 data_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure"
 root_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/train.json"
 validate_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"

@@ -1,7 +1,7 @@
 name: BlindMap_v2xset_Pyramid_base #_fix_softmax
 root_dir: "/home/zzh/projects/HEAL/dataset/V2XSET/train"
-validate_dir: "dataset/V2XSET/validate"
-test_dir: "dataset/V2XSET/test"
+validate_dir: "/home/zzh/projects/HEAL/dataset/V2XSET/validate"
+test_dir: "/home/zzh/projects/HEAL/dataset/V2XSET/test"
 history_blindmap_dir: "dataset/V2XSET/blindmap_history/train" # path to save history blindmaps
 use_history: True
 history_num: &history_num 10

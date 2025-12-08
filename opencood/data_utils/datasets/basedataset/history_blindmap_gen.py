@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from opencood.hypes_yaml.yaml_utils import load_yaml
 from opencood.tools import train_utils, inference_utils
 from opencood.data_utils.datasets.basedataset.opv2v_basedataset import OPV2VBaseDataset
-from opencood.data_utils.datasets.blindmap_intermediate_heter_v2xset_fusion_dataset import getBlindmapintermediateheterv2xsetFusionDataset
+from opencood.data_utils.datasets.blindmap_intermediate_v2xset_fusion_dataset import getBlindmapintermediatev2xsetFusionDataset
 class BlindMapGenerator:
     def __init__(self, hypes_yaml, model_path, data_split):
         """
