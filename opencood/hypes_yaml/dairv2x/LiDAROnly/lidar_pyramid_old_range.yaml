@@ -1,9 +1,9 @@
-name: HeterBaseline_DAIR_lidar_pyramid
+name: BlindMap_DAIR_lidar_pyramid
 data_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure"
 root_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/train.json"
 validate_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
 test_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
-
+use_history: false
 yaml_parser: "load_general_params"
 train_params:
   batch_size: &batch_size 2

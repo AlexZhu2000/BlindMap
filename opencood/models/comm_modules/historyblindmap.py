@@ -1,3 +1,8 @@
+# @Author: Zhenhan Zhu (zhuzhenhan@nuaa.edu.cn)
+# @Date: 2025-12-08 19:27:25
+# @Last Modified by: Zhenhan Zhu
+# @Last Modified time: 2025-12-08 19:27:25
+
 import torch
 import torch.nn as nn
 import numpy as np

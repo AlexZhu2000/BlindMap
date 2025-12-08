@@ -1,30 +1,35 @@
-name: HEAL_v2xset_Pyramid_m1_base #_fix_softmax
-root_dir: "dataset/V2XSET/train"
-validate_dir: "dataset/V2XSET/validate"
-test_dir: "dataset/V2XSET/test"
-
+name: BlindMap_DAIR_lidar_pyramid_blindmap
+data_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure"
+root_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/train.json"
+validate_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
+test_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
+use_history: false
+noise_setting:
+  add_noise: True
+  args: 
+    pos_std: 0.2
+    rot_std: 0.2
+    pos_mean: 0
+    rot_mean: 0
 yaml_parser: "load_general_params"
 train_params:
-  batch_size: &batch_size 4
-  epoches: 30
+  batch_size: &batch_size 2
+  epoches: 40
   eval_freq: 2
   save_freq: 2
-  max_cav: 5
+  max_cav: 2
 
-comm_range: 70
+comm_range: 100
 input_source: ['lidar']
 label_type: 'lidar'
-cav_lidar_range: &cav_lidar [-102.4, -51.2, -3, 102.4, 51.2, 1]
-
+cav_lidar_range: &cav_lidar [-102.4, -51.2, -3.5, 102.4, 51.2, 1.5]
 
 heter:
-  assignment_path: "opencood/logs/heter_modality_assign/v2xset_4modality.json" 
+  assignment_path: null
   ego_modality: &ego_modality "m1"
   mapping_dict:
     m1: m1
     m2: m1
-    m3: m1
-    m4: m1
   modality_setting:
     m1:
       sensor_type: &sensor_type_m1 'lidar'
@@ -35,7 +40,7 @@ heter:
         # options: BasePreprocessor, VoxelPreprocessor, BevPreprocessor
         core_method: 'SpVoxelPreprocessor'
         args:
-          voxel_size: &voxel_size [0.4, 0.4, 4]
+          voxel_size: &voxel_size [0.4, 0.4, 5]
           max_points_per_voxel: 32
           max_voxel_train: 32000
           max_voxel_test: 70000
@@ -44,8 +49,8 @@ heter:
 
 
 fusion:
-  core_method: 'blindmapintermediateheterv2xset'
-  dataset: 'v2xset'
+  core_method: 'blindmapintermediate'
+  dataset: 'dairv2x'
   args: 
     proj_first: false
     grid_conf: None # place-holder
@@ -56,7 +61,7 @@ preprocess:
   # options: BasePreprocessor, VoxelPreprocessor, BevPreprocessor
   core_method: 'SpVoxelPreprocessor'
   args:
-    voxel_size: [0.4, 0.4, 4] # useful
+    voxel_size: [0.4, 0.4, 5] # useful
     max_points_per_voxel: 1 # useless
     max_voxel_train: 1 # useless
     max_voxel_test: 1 # useless
@@ -81,7 +86,7 @@ postprocess:
     score_threshold: 0.2
   order: 'hwl' # hwl or lwh
   max_num: 150 # maximum number of objects in a single frame. use this number to make sure different frames has the same dimension in the same batch
-  nms_thresh: 0.15
+  nms_thresh: 0.05
   dir_args: &dir_args
     dir_offset: 0.7853
     num_bins: 2
@@ -89,7 +94,7 @@ postprocess:
 
 # model related
 model:
-  core_method: heter_pyramid_collab_blindmap_v2xset
+  core_method: blindmap_pyramid_collab
   args:
     lidar_range: *cav_lidar
     supervise_single: true
@@ -126,7 +131,7 @@ model:
       num_upsample_filter: [128, 128, 128]
       anchor_number: *anchor_num
       blindmap:
-        use_ripe: True
+        use_ripe: false
         ripe_dim: 2
       communication:
         thre: 0.01
@@ -150,7 +155,7 @@ model:
 
 
 loss:
-  core_method: point_pillar_pyramid_loss
+  core_method: point_pillar_pyramid_blindmap_loss
   args:
     pos_cls_weight: 2.0
     cls:
@@ -176,7 +181,6 @@ blindmap_loss:
     core_method: "blindmap_loss"
     args:
         blind_map_loss_weight: 1.
-
 optimizer:
   core_method: Adam
   lr: 0.002
@@ -187,5 +191,5 @@ optimizer:
 lr_scheduler:
   core_method: multistep #step, multistep and Exponential support
   gamma: 0.1
-  step_size: [15, 25]
+  step_size: [15, 30]
 

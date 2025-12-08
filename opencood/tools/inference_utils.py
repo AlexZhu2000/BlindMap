@@ -140,7 +140,7 @@ def inference_early_fusion(batch_data, model, dataset):
     output_dict = OrderedDict()
     cav_content = batch_data['ego']
     output_dict['ego'] = model(cav_content)
-    # batch_blind_maps = output_dict['ego']['pred_blind_maps']
+    batch_blind_maps = output_dict['ego']['pred_blind_maps']
     # safe-get pred_blind_maps (may be absent for some models)
     batch_blind_maps = output_dict['ego'].get('pred_blind_maps', None)
     pred_box_tensor, pred_score, gt_box_tensor = \
@@ -150,8 +150,8 @@ def inference_early_fusion(batch_data, model, dataset):
     return_dict = {"pred_box_tensor" : pred_box_tensor, \
                     "pred_score" : pred_score, \
                     "gt_box_tensor" : gt_box_tensor,\
-                    # "batch_blind_maps" : batch_blind_maps}
-                    }
+                    "batch_blind_maps" : batch_blind_maps}
+                    
     if batch_blind_maps is not None:
         return_dict["batch_blind_maps"] = batch_blind_maps
     if "depth_items" in output_dict['ego']:

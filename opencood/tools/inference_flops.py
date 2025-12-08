@@ -1,6 +1,8 @@
-# -*- coding: utf-8 -*-
-# Author: Yifan Lu <yifan_lu@sjtu.edu.cn>, Runsheng Xu <rxx3386@ucla.edu>, Hao Xiang <haxiang@g.ucla.edu>,
-# License: TDG-Attribution-NonCommercial-NoDistrib
+# @Author: Zhenhan Zhu (zhuzhenhan@nuaa.edu.cn)
+# @Date: 2025-12-08 19:28:32
+# @Last Modified by: Zhenhan Zhu
+# @Last Modified time: 2025-12-08 19:28:32
+
 
 import argparse
 import os

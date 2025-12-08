@@ -1,8 +1,9 @@
-name: HeterBaseline_DAIR_lidar_pyramid_blindmap
-data_dir: "/home/zzh/projects/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure"
-root_dir: "/home/zzh/projects/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/train.json"
-validate_dir: "/home/zzh/projects/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
-test_dir: "/home/zzh/projects/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
+name: BlindMap_DAIR_lidar_pyramid_blindmap
+data_dir: "/home/zzh/projects/HEAL/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure"
+root_dir: "/home/zzh/projects/HEAL/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/train.json"
+validate_dir: "/home/zzh/projects/HEAL/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
+test_dir: "/home/zzh/projects/HEAL/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
+use_history: false
 noise_setting:
   add_noise: True
   args: 
@@ -48,7 +49,7 @@ heter:
 
 
 fusion:
-  core_method: 'blindmapintermediateheter'
+  core_method: 'blindmapintermediate'
   dataset: 'dairv2x'
   args: 
     proj_first: false
@@ -93,7 +94,7 @@ postprocess:
 
 # model related
 model:
-  core_method: heter_pyramid_collab_blindmap
+  core_method: blindmap_pyramid_collab
   args:
     lidar_range: *cav_lidar
     supervise_single: true

@@ -1,6 +1,8 @@
-# -*- coding: utf-8 -*-
-# Author: Yifan Lu <yifan_lu@sjtu.edu.cn>
-# License: TDG-Attribution-NonCommercial-NoDistrib
+# @Author: Zhenhan Zhu (zhuzhenhan@nuaa.edu.cn)
+# @Date: 2025-12-08 19:30:29
+# @Last Modified by: Zhenhan Zhu
+# @Last Modified time: 2025-12-08 19:30:29
+
 
 from opencood.data_utils.datasets.basedataset.opv2v_basedataset import OPV2VBaseDataset
 

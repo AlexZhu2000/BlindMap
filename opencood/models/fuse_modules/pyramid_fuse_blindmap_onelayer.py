@@ -1,7 +1,6 @@
-# @Author: Zhenhan Zhu (zhuzhenhan@nuaa.edu.cn)
-# @Date: 2025-12-08 19:26:27
-# @Last Modified by: Zhenhan Zhu
-# @Last Modified time: 2025-12-08 19:26:27
+# -*- coding: utf-8 -*-
+# Author: Yifan Lu <yifan_lu@sjtu.edu.cn>
+# License: TDG-Attribution-NonCommercial-NoDistrib
 
 import numpy as np
 import torch
@@ -14,8 +13,6 @@ from opencood.models.sub_modules.torch_transformation_utils import \
     warp_affine_simple
 from opencood.visualization.debug_plot import plot_feature
 from opencood.models.comm_modules.blindmap import BlindMap
-from opencood.models.comm_modules.historyblindmap import HistoryBlindMap
-from opencood.models.comm_modules.postfusion_history_blindmap import PostFusionBlindMap
 from opencood.models.comm_modules.blindcomm import BlindCommunication
 import torch.nn.functional as F
 import os
@@ -150,24 +147,13 @@ class SumFusion(nn.Module):
         return torch.sum(x, dim=0)
     
 
-class BlindmapPyramidFusion(ResNetBEVBackbone):
+class BlindmapPyramidFusionAlation(ResNetBEVBackbone):
     def __init__(self, model_cfg, input_channels=64):
         """
         Do not downsample in the first layer.
         """
         print('BlindmapPyramidFusion')
         super().__init__(model_cfg, input_channels)
-        # self.downsample_rate = 2
-        self.lidar_range = model_cfg.get('cav_lidar_range', [-102.4, -102.4, -3, 102.4, 102.4, 1])
-        self.voxel_size = model_cfg.get('voxel_size', [0.4, 0.4, 4])
-        grid_size = (
-            np.array(self.lidar_range[3:6]) - np.array(self.lidar_range[0:3])
-        ) / np.array(self.voxel_size)
-        self.grid_size = np.round(grid_size).astype(np.int64)
-        # We only need x,y dimensions for blind map
-        self.grid_size_y, self.grid_size_x = self.grid_size[1], self.grid_size[0]
-
-        self.bev_H, self.bev_W = int(self.grid_size_y // 2), int(self.grid_size_x // 2)
         if model_cfg["resnext"]:
             Bottleneck.expansion = 1
             self.resnet = ResNetModified(Bottleneck, 
@@ -177,12 +163,11 @@ class BlindmapPyramidFusion(ResNetBEVBackbone):
                                         inplanes = model_cfg.get('inplanes', 64),
                                         groups=32,
                                         width_per_group=4)
-        # self.blindmap = BlindMap(model_cfg['blindmap'], self.model_cfg['num_filters'][0])
-        # self.blindmap = HistoryBlindMap(model_cfg['blindmap'], self.model_cfg['num_filters'][0], self.bev_H, self.bev_W)
-        self.blindmap = PostFusionBlindMap(model_cfg['blindmap'], self.model_cfg['num_filters'][0], self.bev_H, self.bev_W)
+        self.blindmap = BlindMap(model_cfg['blindmap'], self.model_cfg['num_filters'][0])
         self.naive_communication = BlindCommunication(self.model_cfg["communication"], self.model_cfg['num_filters'])
-        
-        
+        self.downsample_rate = 2
+        self.bev_H = 128
+        self.bev_W = 256
         self.align_corners = model_cfg.get('align_corners', False)
         print('Align corners: ', self.align_corners)
         self.agg_mode = self.model_cfg["communication"].get('fusion_mode', "MAX")
@@ -201,7 +186,7 @@ class BlindmapPyramidFusion(ResNetBEVBackbone):
                 f"single_head_{i}",
                 nn.Conv2d(self.model_cfg["num_filters"][i], 1, kernel_size=1),
             )
-        self.use_history = model_cfg['blindmap'].get('use_history', False)
+
     def forward_single(self, spatial_features):
         """
         This is used for single agent pass.
@@ -215,8 +200,7 @@ class BlindmapPyramidFusion(ResNetBEVBackbone):
 
         return final_feature, occ_map_list
 
-    def forward_collab(self, spatial_features, record_len, affine_matrix, agent_modality_list = None, cam_crop_info = None,
-                            history_blind_maps = None):
+    def forward_collab(self, spatial_features, record_len, affine_matrix, agent_modality_list = None, cam_crop_info = None):
         """
         spatial_features : torch.tensor
             [sum(record_len), C, H, W]
@@ -239,9 +223,6 @@ class BlindmapPyramidFusion(ResNetBEVBackbone):
             }
         """
         # print('record_len', record_len)
-        import time
-        # torch.cuda.synchronize() if torch.cuda.is_available() else None
-        # bev_fuse_begin_time = time.time()
         B, L = affine_matrix.shape[:2]
         crop_mask_flag = False
         if cam_crop_info is not None and len(cam_crop_info) > 0:
@@ -255,14 +236,8 @@ class BlindmapPyramidFusion(ResNetBEVBackbone):
 
                 # e.g. {m2: [0,0,0,1], m4: [0,1,0,0]}
 
-        # torch.cuda.synchronize() if torch.cuda.is_available() else None
-        # t_heter_feature_2d = time.time()
-        feature_list = self.get_multiscale_feature(spatial_features)
-        # torch.cuda.synchronize() if torch.cuda.is_available() else None
-        # t_get_multiscale_feature = time.time()
-        # get_multiscale_feature_time = t_get_multiscale_feature - t_heter_feature_2d
-        # print('time from heter_feature_2d to get_multiscale_feature: ', get_multiscale_feature_time)
 
+        feature_list = self.get_multiscale_feature(spatial_features)
         # for feature in feature_list:
         #     print("feature shape",feature.shape)
         # feature shape torch.Size([4, 64, 128, 256])
@@ -282,23 +257,12 @@ class BlindmapPyramidFusion(ResNetBEVBackbone):
                 rate = self.bev_H / curr_H
                 pixel_size = 0.4 * rate
                 import time
-                # torch.cuda.synchronize() if torch.cuda.is_available() else None
-                # blindmap_start_time = time.time()
-                if self.use_history and hasattr(self.blindmap, 'use_history'):
-                    # print('use history blind map')
-                    batch_blind_maps = self.blindmap(
-                        x, record_len, affine_matrix, pixel_size,
-                        history_blind_maps=history_blind_maps
-                    )
-                else:
-                    # 使用原始的调用方式
-                    batch_blind_maps = self.blindmap(
-                        x, record_len, affine_matrix, pixel_size
-                    )
-                # torch.cuda.synchronize() if torch.cuda.is_available() else None
-                # blindmp_end_time = time.time()
-                # blindmap_single_batch_time = (blindmp_end_time - blindmap_start_time) / B 
-                # print(f"Blindmap time: {blindmap_single_batch_time * 1000:.2f} ms | batch size: {B} | batch fatures shape: {x.shape}")
+                start_time = time.time()
+                batch_blind_maps = self.blindmap(
+                                    x, record_len, affine_matrix, pixel_size
+                                )
+                end_time = time.time()
+                single_batch_time = (end_time - start_time) / B 
                 # print(f"Blindmap time: {single_batch_time * 1000:.2f} ms | batch size: {B} | batch fatures shape: {x.shape}")
                 # 1.2ms
                 # print('batch_blind_maps.shape:', batch_blind_maps.shape)
@@ -307,38 +271,33 @@ class BlindmapPyramidFusion(ResNetBEVBackbone):
                 batch_blind_maps_groups = regroup(
                             batch_blind_maps, record_len
                         )
-                # torch.cuda.synchronize() if torch.cuda.is_available() else None
-                # naive_comm_start_time = time.time()
                 (batch_communication_maps_list,
                             communication_masks,
                             communication_rates,
                         ) = self.naive_communication(
                             batch_blind_maps_groups, record_len, affine_matrix
                         )
-                # torch.cuda.synchronize() if torch.cuda.is_available() else None
-                # naive_comm_end_time = time.time()
-                # f_select_time = naive_comm_end_time - naive_comm_start_time
-                # print('feature selection time:', f_select_time)
                 original_maps = torch.cat(batch_communication_maps_list, dim=0)
                 x = x * communication_masks
-            elif i > 0:
-                    # Other layers: resize communication maps
-                    resized_maps = F.interpolate(
-                        original_maps,
-                        size=(curr_H, curr_W),
-                        mode='bilinear',
-                        align_corners=True
-                            )
-                    resized_mask = F.interpolate(
-                        communication_masks,
-                        size=(curr_H, curr_W),
-                        mode='bilinear',
-                        align_corners=True
-                            )
-                    x = x * resized_mask
+            else:
+                continue
+            # elif i > 0:
+            #         # Other layers: resize communication maps
+            #         resized_maps = F.interpolate(
+            #             original_maps,
+            #             size=(curr_H, curr_W),
+            #             mode='bilinear',
+            #             align_corners=True
+            #                 )
+            #         resized_mask = F.interpolate(
+            #             communication_masks,
+            #             size=(curr_H, curr_W),
+            #             mode='bilinear',
+            #             align_corners=True
+            #                 )
+            #         x = x * resized_mask
             batch_node_features = regroup(x, record_len)
-            batch_communication_maps = regroup(
-                        resized_maps if i > 0 else original_maps, 
+            batch_communication_maps = regroup( original_maps, 
                         record_len
                     )
             x_fuse = []
@@ -401,10 +360,5 @@ class BlindmapPyramidFusion(ResNetBEVBackbone):
 
             # fused_feature_list.append(weighted_fuse(feature_list[i], score, record_len, affine_matrix, self.align_corners))
         fused_feature = self.decode_multiscale_feature(fused_feature_list)
-        # torch.cuda.synchronize() if torch.cuda.is_available() else None
-        # bev_fused_time = time.time() - bev_fuse_begin_time
-        # print(f"Blindmap Pyramid Fusion time: {bev_fused_time * 1000:.2f} ms | batch size: {B} | batch fatures shape: {fused_feature.shape}")
-        # fusion_time = bev_fused_time - f_select_time - blindmap_single_batch_time - get_multiscale_feature_time
-        # print(f"Fusion time: {fusion_time * 1000:.2f} ms | batch size: {B} | batch fatures shape: {fused_feature.shape}")
 
         return fused_feature, communication_rates, batch_blind_maps, occ_map_list

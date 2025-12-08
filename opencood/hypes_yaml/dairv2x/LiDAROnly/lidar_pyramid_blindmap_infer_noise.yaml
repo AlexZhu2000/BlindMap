@@ -1,13 +1,15 @@
 name: HeterBaseline_DAIR_lidar_pyramid_blindmap
-data_dir: "/home/zzh/projects/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure"
-root_dir: "/home/zzh/projects/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/train.json"
-validate_dir: "/home/zzh/projects/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
-test_dir: "/home/zzh/projects/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
+data_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure"
+root_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/train.json"
+validate_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
+test_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
+
+use_history: false
 noise_setting:
   add_noise: True
   args: 
     pos_std: 0.2
-    rot_std: 0
+    rot_std: 0.2
     pos_mean: 0
     rot_mean: 0
 yaml_parser: "load_general_params"
@@ -48,7 +50,7 @@ heter:
 
 
 fusion:
-  core_method: 'blindmapintermediateheter'
+  core_method: 'blindmapintermediate'
   dataset: 'dairv2x'
   args: 
     proj_first: false
@@ -93,7 +95,7 @@ postprocess:
 
 # model related
 model:
-  core_method: heter_pyramid_collab_blindmap
+  core_method: blindmap_pyramid_collab
   args:
     lidar_range: *cav_lidar
     supervise_single: true

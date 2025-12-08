@@ -1,6 +1,7 @@
-# -*- coding: utf-8 -*-
-# Author: Yue Hu <phyllis1sjtu@outlook.com>
-# License: TDG-Attribution-NonCommercial-NoDistrib
+# @Author: Zhenhan Zhu (zhuzhenhan@nuaa.edu.cn)
+# @Date: 2025-12-08 19:27:06
+# @Last Modified by: Zhenhan Zhu
+# @Last Modified time: 2025-12-08 19:27:06
 
 import torch
 import torch.nn as nn

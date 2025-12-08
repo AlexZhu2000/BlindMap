@@ -3,7 +3,7 @@ data_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-
 root_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/train.json"
 validate_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
 test_dir: "/home/node/code/zzh/Where2comm/dataset/my_dair_v2x/v2x_c/cooperative-vehicle-infrastructure/val.json"
-
+use_history: false
 yaml_parser: "load_general_params"
 train_params:
   batch_size: &batch_size 2
@@ -42,7 +42,7 @@ heter:
 
 
 fusion:
-  core_method: 'blindmapintermediateheter'
+  core_method: 'blindmapintermediate'
   dataset: 'dairv2x'
   args: 
     proj_first: false
@@ -87,7 +87,7 @@ postprocess:
 
 # model related
 model:
-  core_method: heter_pyramid_collab_blindmap
+  core_method: blindmap_pyramid_collab
   args:
     lidar_range: *cav_lidar
     supervise_single: true

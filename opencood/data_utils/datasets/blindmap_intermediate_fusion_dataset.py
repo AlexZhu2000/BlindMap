@@ -1,6 +1,8 @@
-# -*- coding: utf-8 -*-
-# Author: Yifan Lu <yifan_lu@sjtu.edu.cn>
-# License: TDG-Attribution-NonCommercial-NoDistrib
+# @Author: Zhenhan Zhu (zhuzhenhan@nuaa.edu.cn)
+# @Date: 2025-12-08 19:31:13
+# @Last Modified by: Zhenhan Zhu
+# @Last Modified time: 2025-12-08 19:31:13
+
 
 import random
 import math
@@ -20,9 +22,10 @@ from opencood.utils.camera_utils import (
     normalize_img,
     img_to_tensor,
 )
-from opencood.utils.common_utils import merge_features_to_dict
+from opencood.utils.common_utils import merge_features_to_dict, compute_iou, convert_format
 from opencood.utils.transformation_utils import x1_to_x2, x_to_world, get_pairwise_transformation
 from opencood.utils.pose_utils import add_noise_data_dict
+from opencood.data_utils.pre_processor import build_preprocessor
 from opencood.utils.pcd_utils import (
     mask_points_by_range,
     mask_ego_points,
@@ -30,17 +33,18 @@ from opencood.utils.pcd_utils import (
     downsample_lidar_minimum,
 )
 from opencood.utils.common_utils import read_json
+from opencood.utils.heter_utils import Adaptor
 
 
 def getBlindmapintermediateFusionDataset(cls):
     """
     cls: the Basedataset.
     """
-    class BlindmapIntermediateFusionDataset(cls):
+    class IntermediateheterFusionDataset(cls):
         def __init__(self, params, visualize, train=True):
             super().__init__(params, visualize, train)
             # intermediate and supervise single
-            print('---------------getBlindmapintermediateFusionDataset---------------')
+            print('----------getBlindmapintermediateFusionDataset-----------')
             self.supervise_single = True if ('supervise_single' in params['model']['args'] and params['model']['args']['supervise_single']) \
                                         else False
             self.proj_first = False if 'proj_first' not in params['fusion']['args']\
@@ -48,6 +52,41 @@ def getBlindmapintermediateFusionDataset(cls):
 
             self.anchor_box = self.post_processor.generate_anchor_box()
             self.anchor_box_torch = torch.from_numpy(self.anchor_box)
+
+            self.heterogeneous = True
+            self.modality_assignment = None if ('assignment_path' not in params['heter'] or params['heter']['assignment_path'] is None) \
+                                            else read_json(params['heter']['assignment_path'])
+            
+            self.ego_modality = params['heter']['ego_modality'] # "m1" or "m1&m2" or "m3"
+
+            self.modality_name_list = list(params['heter']['modality_setting'].keys())
+            self.sensor_type_dict = OrderedDict()
+
+            lidar_channels_dict = params['heter'].get('lidar_channels_dict', OrderedDict())
+            mapping_dict = params['heter']['mapping_dict']
+            cav_preference = params['heter'].get("cav_preference", None)
+
+            self.adaptor = Adaptor(self.ego_modality,
+                                   self.modality_name_list,
+                                   self.modality_assignment,
+                                   lidar_channels_dict,
+                                   mapping_dict,
+                                   cav_preference,
+                                   train)
+
+            for modality_name, modal_setting in params['heter']['modality_setting'].items():
+                self.sensor_type_dict[modality_name] = modal_setting['sensor_type']
+                if modal_setting['sensor_type'] == 'lidar':
+                    setattr(self, f"pre_processor_{modality_name}", build_preprocessor(modal_setting['preprocess'], train))
+
+                elif modal_setting['sensor_type'] == 'camera':
+                    setattr(self, f"data_aug_conf_{modality_name}", modal_setting['data_aug_conf'])
+
+                else:
+                    raise("Not support this type of sensor")
+
+            self.reinitialize()
+                
 
             self.kd_flag = params.get('kd_flag', False)
 
@@ -58,7 +97,6 @@ def getBlindmapintermediateFusionDataset(cls):
                 self.stage1_result = read_json(self.stage1_result_path)
                 self.box_align_args = params['box_align']['args']
                 
-
 
 
         def get_item_single_car(self, selected_cav_base, ego_cav_base):
@@ -92,8 +130,11 @@ def getBlindmapintermediateFusionDataset(cls):
                 x1_to_x2(selected_cav_base['params']['lidar_pose_clean'],
                         ego_pose_clean)
             
+            modality_name = selected_cav_base['modality_name']
+            sensor_type = self.sensor_type_dict[modality_name]
+
             # lidar
-            if self.load_lidar_file or self.visualize:
+            if sensor_type == "lidar" or self.visualize:
                 # process lidar
                 lidar_np = selected_cav_base['lidar_np']
                 lidar_np = shuffle_points(lidar_np)
@@ -118,12 +159,13 @@ def getBlindmapintermediateFusionDataset(cls):
                     selected_cav_processed.update({'projected_lidar': lidar_proj_np})
 
                     # 2023.8.31, to correct discretization errors. Just replace one point to avoid empty voxels. need fix later.
-                    lidar_proj_np[np.random.randint(0, lidar_proj_np.shape[0]),:3] = np.array([0,0,0])
-                    processed_lidar_proj = self.pre_processor.preprocess(lidar_proj_np)
-                    selected_cav_processed.update({'processed_features_proj': processed_lidar_proj})
+                    lidar_proj_np[np.random.randint(0, lidar_proj_np.shape[0]),:3] = np.array([0,0,0]) 
+                    processed_lidar_proj = eval(f"self.pre_processor_{modality_name}").preprocess(lidar_proj_np)
+                    selected_cav_processed.update({f'processed_features_{modality_name}_proj': processed_lidar_proj})
 
-                processed_lidar = self.pre_processor.preprocess(lidar_np)
-                selected_cav_processed.update({'processed_features': processed_lidar})
+                if sensor_type == "lidar":
+                    processed_lidar = eval(f"self.pre_processor_{modality_name}").preprocess(lidar_np)
+                    selected_cav_processed.update({f'processed_features_{modality_name}': processed_lidar})
 
             # generate targets label single GT, note the reference pose is itself.
             object_bbx_center, object_bbx_mask, object_ids = self.generate_object_center(
@@ -138,9 +180,8 @@ def getBlindmapintermediateFusionDataset(cls):
                                 "single_object_bbx_mask": object_bbx_mask})
 
             # camera
-            if self.load_camera_file:
+            if sensor_type == "camera":
                 camera_data_list = selected_cav_base["camera_data"]
-
                 params = selected_cav_base["params"]
                 imgs = []
                 rots = []
@@ -173,7 +214,7 @@ def getBlindmapintermediateFusionDataset(cls):
 
                     # data augmentation
                     resize, resize_dims, crop, flip, rotate = sample_augmentation(
-                        self.data_aug_conf, self.train
+                        eval(f"self.data_aug_conf_{modality_name}"), self.train
                     )
                     img_src, post_rot2, post_tran2 = img_transform(
                         img_src,
@@ -208,7 +249,7 @@ def getBlindmapintermediateFusionDataset(cls):
 
                 selected_cav_processed.update(
                     {
-                    "image_inputs": 
+                    f"image_inputs_{modality_name}": 
                         {
                             "imgs": torch.stack(imgs), # [Ncam, 3or4, H, W]
                             "intrins": torch.stack(intrins),
@@ -265,14 +306,19 @@ def getBlindmapintermediateFusionDataset(cls):
             assert ego_id != -1
             assert len(ego_lidar_pose) > 0
 
-            agents_image_inputs = []
-            processed_features = []
+            
+            input_list_m1 = [] # can contain lidar or camera
+            input_list_m2 = []
+            input_list_m3 = []
+            input_list_m4 = []
+
+            agent_modality_list = []
             object_stack = []
             object_id_stack = []
             single_label_list = []
             single_object_bbx_center_list = []
             single_object_bbx_mask_list = []
-            too_far = []
+            exclude_agent = []
             lidar_pose_list = []
             lidar_pose_clean_list = []
             cav_id_list = []
@@ -280,7 +326,10 @@ def getBlindmapintermediateFusionDataset(cls):
 
             if self.visualize or self.kd_flag:
                 projected_lidar_stack = []
-                processed_features_proj = [] # 2023.8.31, to correct discretization errors
+                input_list_m1_proj = [] # 2023.8.31 to correct discretization errors with kd flag
+                input_list_m2_proj = []
+                input_list_m3_proj = []
+                input_list_m4_proj = []
 
             # loop over all CAVs to process information
             for cav_id, selected_cav_base in base_data_dict.items():
@@ -293,15 +342,23 @@ def getBlindmapintermediateFusionDataset(cls):
                                         1]) ** 2)
 
                 # if distance is too far, we will just skip this agent
-                if distance > self.params['comm_range']:
-                    too_far.append(cav_id)
+                # if distance > self.params['comm_range']:
+                #     exclude_agent.append(cav_id)
+                #     continue
+                
+                # if modality not match
+                if self.adaptor.unmatched_modality(selected_cav_base['modality_name']):
+                    exclude_agent.append(cav_id)
                     continue
 
                 lidar_pose_clean_list.append(selected_cav_base['params']['lidar_pose_clean'])
                 lidar_pose_list.append(selected_cav_base['params']['lidar_pose']) # 6dof pose
                 cav_id_list.append(cav_id)   
 
-            for cav_id in too_far:
+            if len(cav_id_list) == 0:
+                return None
+
+            for cav_id in exclude_agent:
                 base_data_dict.pop(cav_id)
 
             ########## Updated by Yifan Lu 2022.1.26 ############
@@ -349,37 +406,50 @@ def getBlindmapintermediateFusionDataset(cls):
             # merge preprocessed features from different cavs into the same dict
             cav_num = len(cav_id_list)
             
-            
             for _i, cav_id in enumerate(cav_id_list):
                 selected_cav_base = base_data_dict[cav_id]
+                modality_name = selected_cav_base['modality_name']
+                sensor_type = self.sensor_type_dict[selected_cav_base['modality_name']]
+
+                # dynamic object center generator! for heterogeneous input
+                if not self.visualize:
+                    self.generate_object_center = eval(f"self.generate_object_center_{sensor_type}")
+                # need discussion. In test phase, use lidar label.
+                else: 
+                    self.generate_object_center = self.generate_object_center_lidar
 
                 selected_cav_processed = self.get_item_single_car(
                     selected_cav_base,
                     ego_cav_base)
-                    
+                
                 object_stack.append(selected_cav_processed['object_bbx_center'])
                 object_id_stack += selected_cav_processed['object_ids']
-                if self.load_lidar_file:
-                    processed_features.append(
-                        selected_cav_processed['processed_features'])
-                if self.load_camera_file:
-                    agents_image_inputs.append(
-                        selected_cav_processed['image_inputs'])
+
+
+                if sensor_type == "lidar":
+                    eval(f"input_list_{modality_name}").append(selected_cav_processed[f"processed_features_{modality_name}"])
+                elif sensor_type == "camera":
+                    eval(f"input_list_{modality_name}").append(selected_cav_processed[f"image_inputs_{modality_name}"])
+                else:
+                    raise
+                
+                agent_modality_list.append(modality_name)
 
                 if self.visualize or self.kd_flag:
+                    # heterogeneous setting do not support disconet' kd
                     projected_lidar_stack.append(
                         selected_cav_processed['projected_lidar'])
-                    if self.kd_flag:
-                        processed_features_proj.append(
-                            selected_cav_processed['processed_features_proj'])
+                    if sensor_type == "lidar" and self.kd_flag:
+                        eval(f"input_list_{modality_name}_proj").append(selected_cav_processed[f"processed_features_{modality_name}_proj"])
+                        
                 
-                if self.supervise_single:
+                if self.supervise_single or self.heterogeneous:
                     single_label_list.append(selected_cav_processed['single_label_dict'])
                     single_object_bbx_center_list.append(selected_cav_processed['single_object_bbx_center'])
                     single_object_bbx_mask_list.append(selected_cav_processed['single_object_bbx_mask'])
 
             # generate single view GT label
-            if self.supervise_single:
+            if self.supervise_single or self.heterogeneous:
                 single_label_dicts = self.post_processor.collate_batch(single_label_list)
                 single_object_bbx_center = torch.from_numpy(np.array(single_object_bbx_center_list))
                 single_object_bbx_mask = torch.from_numpy(np.array(single_object_bbx_mask_list))
@@ -388,26 +458,44 @@ def getBlindmapintermediateFusionDataset(cls):
                     "single_object_bbx_center_torch": single_object_bbx_center,
                     "single_object_bbx_mask_torch": single_object_bbx_mask,
                     })
-
-            if self.kd_flag:
-                stack_lidar_np = np.vstack(projected_lidar_stack)
-                stack_lidar_np = mask_points_by_range(stack_lidar_np,
-                                            self.params['preprocess'][
-                                                'cav_lidar_range'])
-                stack_feature_processed = self.pre_processor.preprocess(stack_lidar_np)
-                merged_feature_proj_dict = merge_features_to_dict(processed_features_proj)
-
-                processed_data_dict['ego'].update({
-                    'teacher_processed_lidar': stack_feature_processed,
-                    'processed_lidar_proj': merged_feature_proj_dict
-                    })
-
             
-            # exclude all repetitive objects    
-            unique_indices = \
-                [object_id_stack.index(x) for x in set(object_id_stack)]
-            object_stack = np.vstack(object_stack)
-            object_stack = object_stack[unique_indices]
+            # exculude all repetitve objects, DAIR-V2X
+            if self.params['fusion']['dataset'] == 'dairv2x':
+                if len(object_stack) == 1:
+                    object_stack = object_stack[0]
+                else:
+                    ego_boxes_np = object_stack[0]
+                    cav_boxes_np = object_stack[1]
+                    order = self.params['postprocess']['order']
+                    ego_corners_np = box_utils.boxes_to_corners_3d(ego_boxes_np, order)
+                    cav_corners_np = box_utils.boxes_to_corners_3d(cav_boxes_np, order)
+                    ego_polygon_list = list(convert_format(ego_corners_np))
+                    cav_polygon_list = list(convert_format(cav_corners_np))
+                    iou_thresh = 0.05 
+
+
+                    gt_boxes_from_cav = []
+                    for i in range(len(cav_polygon_list)):
+                        cav_polygon = cav_polygon_list[i]
+                        ious = compute_iou(cav_polygon, ego_polygon_list)
+                        if (ious > iou_thresh).any():
+                            continue
+                        gt_boxes_from_cav.append(cav_boxes_np[i])
+                    
+                    if len(gt_boxes_from_cav):
+                        object_stack_from_cav = np.stack(gt_boxes_from_cav)
+                        object_stack = np.vstack([ego_boxes_np, object_stack_from_cav])
+                    else:
+                        object_stack = ego_boxes_np
+
+                unique_indices = np.arange(object_stack.shape[0])
+                object_id_stack = np.arange(object_stack.shape[0])
+            else:
+                # exclude all repetitive objects, OPV2V-H
+                unique_indices = \
+                    [object_id_stack.index(x) for x in set(object_id_stack)]
+                object_stack = np.vstack(object_stack)
+                object_stack = object_stack[unique_indices]
 
             # make sure bounding boxes across all frames have the same number
             object_bbx_center = \
@@ -416,13 +504,28 @@ def getBlindmapintermediateFusionDataset(cls):
             object_bbx_center[:object_stack.shape[0], :] = object_stack
             mask[:object_stack.shape[0]] = 1
             
-            if self.load_lidar_file:
-                merged_feature_dict = merge_features_to_dict(processed_features)
-                processed_data_dict['ego'].update({'processed_lidar': merged_feature_dict})
-            if self.load_camera_file:
-                merged_image_inputs_dict = merge_features_to_dict(agents_image_inputs, merge='stack')
-                processed_data_dict['ego'].update({'image_inputs': merged_image_inputs_dict})
+            for modality_name in self.modality_name_list:
+                if self.sensor_type_dict[modality_name] == "lidar":
+                    merged_feature_dict = merge_features_to_dict(eval(f"input_list_{modality_name}")) 
+                    processed_data_dict['ego'].update({f'input_{modality_name}': merged_feature_dict}) # maybe None
+                elif self.sensor_type_dict[modality_name] == "camera":
+                    merged_image_inputs_dict = merge_features_to_dict(eval(f"input_list_{modality_name}"), merge='stack')
+                    processed_data_dict['ego'].update({f'input_{modality_name}': merged_image_inputs_dict}) # maybe None
 
+            if self.kd_flag:
+                # heterogenous setting do not support DiscoNet's kd
+                # stack_lidar_np = np.vstack(projected_lidar_stack)
+                # stack_lidar_np = mask_points_by_range(stack_lidar_np,
+                #                             self.params['preprocess'][
+                #                                 'cav_lidar_range'])
+                # stack_feature_processed = self.pre_processor.preprocess(stack_lidar_np)
+                for modality_name in self.modality_name_list:
+                    processed_data_dict['ego'].update({
+                        f'input_{modality_name}_proj': merge_features_to_dict(eval(f"input_list_{modality_name}_proj")) # maybe None
+                        })
+
+
+            processed_data_dict['ego'].update({'agent_modality_list': agent_modality_list})
 
             # generate targets label
             label_dict = \
@@ -469,9 +572,17 @@ def getBlindmapintermediateFusionDataset(cls):
             object_bbx_center = []
             object_bbx_mask = []
             object_ids = []
-            processed_lidar_list = []
-            processed_lidar_proj_list = []
-            image_inputs_list = []
+            inputs_list_m1 = [] 
+            inputs_list_m2 = []
+            inputs_list_m3 = []
+            inputs_list_m4 = []
+
+            inputs_list_m1_proj = [] 
+            inputs_list_m2_proj = []
+            inputs_list_m3_proj = []
+            inputs_list_m4_proj = []
+
+            agent_modality_list = []
             # used to record different scenario
             record_len = []
             label_dict_list = []
@@ -489,7 +600,7 @@ def getBlindmapintermediateFusionDataset(cls):
             teacher_processed_lidar_list = []
             
             ### 2022.10.10 single gt ####
-            if self.supervise_single:
+            if self.supervise_single or self.heterogeneous:
                 pos_equal_one_single = []
                 neg_equal_one_single = []
                 targets_single = []
@@ -503,15 +614,16 @@ def getBlindmapintermediateFusionDataset(cls):
                 object_ids.append(ego_dict['object_ids'])
                 lidar_pose_list.append(ego_dict['lidar_poses']) # ego_dict['lidar_pose'] is np.ndarray [N,6]
                 lidar_pose_clean_list.append(ego_dict['lidar_poses_clean'])
-                if self.load_lidar_file:
-                    processed_lidar_list.append(ego_dict['processed_lidar'])
-                if self.load_camera_file:
-                    image_inputs_list.append(ego_dict['image_inputs']) # different cav_num, ego_dict['image_inputs'] is dict.
                 ######################## BlindMap ########################
                 # Collect blind maps from both views
                 blind_map_ego_list.append(ego_dict["blind_map_ego"])
                 blind_map_infra_list.append(ego_dict["blind_map_infra"])
-                ######################## BlindMap ########################
+                for modality_name in self.modality_name_list:
+                    if ego_dict[f'input_{modality_name}'] is not None:
+                        eval(f"inputs_list_{modality_name}").append(ego_dict[f'input_{modality_name}']) # OrderedDict() if empty?
+
+                agent_modality_list.extend(ego_dict['agent_modality_list'])
+                
                 record_len.append(ego_dict['cav_num'])
                 label_dict_list.append(ego_dict['label_dict'])
                 pairwise_t_matrix_list.append(ego_dict['pairwise_t_matrix'])
@@ -520,11 +632,14 @@ def getBlindmapintermediateFusionDataset(cls):
                     origin_lidar.append(ego_dict['origin_lidar'])
 
                 if self.kd_flag:
-                    teacher_processed_lidar_list.append(ego_dict['teacher_processed_lidar'])
-                    processed_lidar_proj_list.append(ego_dict['processed_lidar_proj'])
+                    # hetero setting do not support disconet' kd
+                    # teacher_processed_lidar_list.append(ego_dict['teacher_processed_lidar'])
+                    for modality_name in self.modality_name_list:
+                        if ego_dict[f'input_{modality_name}_proj'] is not None:
+                            eval(f"inputs_list_{modality_name}_proj").append(ego_dict[f"input_{modality_name}_proj"])
 
                 ### 2022.10.10 single gt ####
-                if self.supervise_single:
+                if self.supervise_single or self.heterogeneous:
                     pos_equal_one_single.append(ego_dict['single_label_dict_torch']['pos_equal_one'])
                     neg_equal_one_single.append(ego_dict['single_label_dict_torch']['neg_equal_one'])
                     targets_single.append(ego_dict['single_label_dict_torch']['targets'])
@@ -535,19 +650,25 @@ def getBlindmapintermediateFusionDataset(cls):
             # convert to numpy, (B, max_num, 7)
             object_bbx_center = torch.from_numpy(np.array(object_bbx_center))
             object_bbx_mask = torch.from_numpy(np.array(object_bbx_mask))
+
             ######################## BlindMap ########################
             # Convert to tensors
             blind_maps_ego = torch.from_numpy(np.array(blind_map_ego_list))  # (B, H, W)
             blind_maps_infra = torch.from_numpy(np.array(blind_map_infra_list))  # (B, H, W)
-            if self.load_lidar_file:
-                merged_feature_dict = merge_features_to_dict(processed_lidar_list)
-                processed_lidar_torch_dict = \
-                    self.pre_processor.collate_batch(merged_feature_dict)
-                output_dict['ego'].update({'processed_lidar': processed_lidar_torch_dict})
+            # 2023.2.5
+            for modality_name in self.modality_name_list:
+                if len(eval(f"inputs_list_{modality_name}")) != 0:
+                    if self.sensor_type_dict[modality_name] == "lidar":
+                        merged_feature_dict = merge_features_to_dict(eval(f"inputs_list_{modality_name}"))
+                        processed_lidar_torch_dict = eval(f"self.pre_processor_{modality_name}").collate_batch(merged_feature_dict)
+                        output_dict['ego'].update({f'inputs_{modality_name}': processed_lidar_torch_dict})
 
-            if self.load_camera_file:
-                merged_image_inputs_dict = merge_features_to_dict(image_inputs_list, merge='cat')
-                output_dict['ego'].update({'image_inputs': merged_image_inputs_dict})
+                    elif self.sensor_type_dict[modality_name] == "camera":
+                        merged_image_inputs_dict = merge_features_to_dict(eval(f"inputs_list_{modality_name}"), merge='cat')
+                        output_dict['ego'].update({f'inputs_{modality_name}': merged_image_inputs_dict})
+
+
+            output_dict['ego'].update({"agent_modality_list": agent_modality_list})
             
             record_len = torch.from_numpy(np.array(record_len, dtype=int))
             lidar_pose = torch.from_numpy(np.concatenate(lidar_pose_list, axis=0))
@@ -582,6 +703,7 @@ def getBlindmapintermediateFusionDataset(cls):
                                     "blind_map_infra": blind_maps_infra,
                                     "blind_maps_gt": blind_maps_infra,
                                     })
+            
 
 
             if self.visualize:
@@ -591,19 +713,16 @@ def getBlindmapintermediateFusionDataset(cls):
                 output_dict['ego'].update({'origin_lidar': origin_lidar})
 
             if self.kd_flag:
-                teacher_processed_lidar_torch_dict = \
-                    self.pre_processor.collate_batch(teacher_processed_lidar_list)
-                
-                merged_feature_proj_dict = merge_features_to_dict(processed_lidar_proj_list)
-                processed_lidar_torch_proj_dict = self.pre_processor.collate_batch(merged_feature_proj_dict)
-                output_dict['ego'].update({
-                    'teacher_processed_lidar':teacher_processed_lidar_torch_dict,
-                    'processed_lidar_proj': processed_lidar_torch_proj_dict
-                })
-                
+                # teacher_processed_lidar_torch_dict = \
+                #     self.pre_processor.collate_batch(teacher_processed_lidar_list)
+                # output_dict['ego'].update({'teacher_processed_lidar':teacher_processed_lidar_torch_dict})
+                for modality_name in self.modality_name_list:
+                    if len(eval(f"inputs_list_{modality_name}_proj")) != 0 and self.sensor_type_dict[modality_name] == "lidar":
+                        merged_feature_proj_dict = merge_features_to_dict(eval(f"inputs_list_{modality_name}_proj"))
+                        processed_lidar_torch_proj_dict = eval(f"self.pre_processor_{modality_name}").collate_batch(merged_feature_proj_dict)
+                        output_dict['ego'].update({f'inputs_{modality_name}_proj': processed_lidar_torch_proj_dict})
 
-
-            if self.supervise_single:
+            if self.supervise_single  or self.heterogeneous:
                 output_dict['ego'].update({
                     "label_dict_single":{
                             "pos_equal_one": torch.cat(pos_equal_one_single, dim=0),
@@ -621,6 +740,8 @@ def getBlindmapintermediateFusionDataset(cls):
 
         def collate_batch_test(self, batch):
             assert len(batch) <= 1, "Batch size 1 is required during testing!"
+            if batch[0] is None:
+                return None
             output_dict = self.collate_batch_train(batch)
             if output_dict is None:
                 return None
@@ -645,12 +766,8 @@ def getBlindmapintermediateFusionDataset(cls):
 
             output_dict['ego'].update({
                 "sample_idx": batch[0]['ego']['sample_idx'],
-                "cav_id_list": batch[0]['ego']['cav_id_list']
-            })
-            output_dict["ego"].update(
-            {
-                "sample_idx": batch[0]["ego"]["sample_idx"],
-                "cav_id_list": batch[0]["ego"]["cav_id_list"],
+                "cav_id_list": batch[0]['ego']['cav_id_list'],
+                "agent_modality_list": batch[0]['ego']['agent_modality_list'],
                 # Add blind map directly from batch since batch size is 1
                 "blind_map_ego": torch.from_numpy(
                     batch[0]["ego"]["blind_map_ego"]
@@ -661,8 +778,8 @@ def getBlindmapintermediateFusionDataset(cls):
                 "blind_maps_gt": torch.from_numpy(
                     batch[0]["ego"]["blind_map_infra"]
                 ).unsqueeze(0),  # Use infra blind map as GT
-            }
-        )
+            })
+
             return output_dict
 
 
@@ -692,6 +809,6 @@ def getBlindmapintermediateFusionDataset(cls):
             return pred_box_tensor, pred_score, gt_box_tensor
 
 
-    return BlindmapIntermediateFusionDataset
+    return IntermediateheterFusionDataset
 
 

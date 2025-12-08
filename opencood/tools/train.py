@@ -1,6 +1,8 @@
-# -*- coding: utf-8 -*-
-# Author: Yifan Lu <yifan_lu@sjtu.edu.cn>
-# License: TDG-Attribution-NonCommercial-NoDistrib
+# @Author: Zhenhan Zhu (zhuzhenhan@nuaa.edu.cn)
+# @Date: 2025-12-08 19:28:08
+# @Last Modified by: Zhenhan Zhu
+# @Last Modified time: 2025-12-08 19:28:08
+
 
 import argparse
 import os
@@ -32,7 +34,7 @@ def train_parser():
 def main():
     opt = train_parser()
     hypes = yaml_utils.load_yaml(opt.hypes_yaml, opt)
-    hypes['use_history'] = None
+
     print('Dataset Building')
     opencood_train_dataset = build_dataset(hypes, visualize=False, train=True)
     opencood_validate_dataset = build_dataset(hypes,
@@ -66,12 +68,11 @@ def main():
 
     # define the loss
     criterion = train_utils.create_loss(hypes)
-
+    blindmap_criterion = train_utils.create_blindmap_loss(hypes)
     # optimizer setup
     optimizer = train_utils.setup_optimizer(hypes, model)
     # lr scheduler setup
     
-
     # if we want to train from last checkpoint.
     if opt.model_dir:
         saved_path = opt.model_dir
@@ -120,6 +121,19 @@ def main():
             final_loss = criterion(ouput_dict, batch_data['ego']['label_dict'])
             criterion.logging(epoch, i, len(train_loader), writer)
 
+
+            ########################
+            global_step = epoch * len(train_loader) + i
+            if 'pred_blind_maps' in ouput_dict:
+                blind_loss = blindmap_criterion(
+                    ouput_dict['pred_blind_maps'],
+                    batch_data['ego']['blind_maps_gt'],
+                    batch_data['ego']['record_len']
+                )
+                final_loss += blind_loss
+                writer.add_scalar('Train/BlindMapLoss', blind_loss.item(), global_step)
+
+            ########################
             if supervise_single_flag:
                 final_loss += criterion(ouput_dict, batch_data['ego']['label_dict_single'], suffix="_single") * hypes['train_params'].get("single_weight", 1)
                 criterion.logging(epoch, i, len(train_loader), writer, suffix="_single")
@@ -127,9 +141,7 @@ def main():
             # back-propagation
             final_loss.backward()
             optimizer.step()
-
             # torch.cuda.empty_cache()  # it will destroy memory buffer
-
         if epoch % hypes['train_params']['save_freq'] == 0:
             torch.save(model.state_dict(),
                        os.path.join(saved_path,

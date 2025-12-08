@@ -1,7 +1,8 @@
-""" Author: Yifan Lu <yifan_lu@sjtu.edu.cn>
+# @Author: Zhenhan Zhu (zhuzhenhan@nuaa.edu.cn)
+# @Date: 2025-12-08 19:26:04
+# @Last Modified by: Zhenhan Zhu
+# @Last Modified time: 2025-12-08 19:26:04
 
-HEAL: An Extensible Framework for Open Heterogeneous Collaborative Perception 
-"""
 
 import torch
 import torch.nn as nn
@@ -19,9 +20,9 @@ from opencood.utils.model_utils import check_trainable_module, fix_bn, unfix_bn
 import importlib
 import torchvision
 
-class HeterPyramidCollabBlindmap(nn.Module):
+class BlindmapPyramidCollab(nn.Module):
     def __init__(self, args):
-        super(HeterPyramidCollabBlindmap, self).__init__()
+        super(BlindmapPyramidCollab, self).__init__()
         self.args = args
         modality_name_list = list(args.keys())
         modality_name_list = [x for x in modality_name_list if x.startswith("m") and x[1:].isdigit()] 

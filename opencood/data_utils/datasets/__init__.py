@@ -4,9 +4,10 @@ from opencood.data_utils.datasets.early_fusion_dataset import getEarlyFusionData
 from opencood.data_utils.datasets.intermediate_fusion_dataset import getIntermediateFusionDataset
 from opencood.data_utils.datasets.intermediate_2stage_fusion_dataset import getIntermediate2stageFusionDataset
 from opencood.data_utils.datasets.intermediate_heter_fusion_dataset import getIntermediateheterFusionDataset
-from opencood.data_utils.datasets.blindmap_intermediate_heter_fusion_dataset import getBlindmapintermediateheterFusionDataset
-from opencood.data_utils.datasets.blindmap_intermediate_heter_v2xset_fusion_dataset import getBlindmapintermediateheterv2xsetFusionDataset
+
 from opencood.data_utils.datasets.heter_infer.intermediate_heter_infer_fusion_dataset import getIntermediateheterinferFusionDataset
+from opencood.data_utils.datasets.blindmap_intermediate_fusion_dataset import getBlindmapintermediateFusionDataset
+from opencood.data_utils.datasets.blindmap_intermediate_v2xset_fusion_dataset import getBlindmapintermediatev2xsetFusionDataset
 
 from opencood.data_utils.datasets.basedataset.opv2v_basedataset import OPV2VBaseDataset
 from opencood.data_utils.datasets.basedataset.v2xsim_basedataset import V2XSIMBaseDataset
@@ -18,7 +19,7 @@ def build_dataset(dataset_cfg, visualize=False, train=True):
     dataset_name = dataset_cfg['fusion']['dataset']
     print('fusion_name', fusion_name)
     assert fusion_name in ['late', 'lateheter', 'intermediate', 'intermediate2stage', 'intermediateheter', 'early',
-                            'intermediateheterinfer', 'blindmapintermediateheter', 'blindmapintermediateheterv2xset']
+                            'intermediateheterinfer', 'blindmapintermediate', 'blindmapintermediatev2xset']
     assert dataset_name in ['opv2v', 'v2xsim', 'dairv2x', 'v2xset']
 
     fusion_dataset_func = "get" + fusion_name.capitalize() + "FusionDataset"

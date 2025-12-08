@@ -1,4 +1,4 @@
-name: Blindmap_opv2v_lidar_pyramid
+name: BlindMap_opv2v_lidar_pyramid
 root_dir: "/home/zzh/projects/HEAL/dataset/OPV2V/train"
 validate_dir: "/home/zzh/projects/HEAL/dataset/OPV2V/validate"
 test_dir: "/home/zzh/projects/HEAL/dataset/OPV2V/test"
@@ -44,7 +44,7 @@ heter:
 
 
 fusion:
-  core_method: 'blindmapintermediateheterv2xset'
+  core_method: 'blindmapintermediatev2xset'
   dataset: 'opv2v'
   args: 
     proj_first: false
@@ -89,7 +89,7 @@ postprocess:
 
 # model related
 model:
-  core_method: heter_pyramid_collab_blindmap
+  core_method: blindmap_pyramid_collab_v2xset
   args:
     lidar_range: *cav_lidar
     supervise_single: true

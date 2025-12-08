@@ -1,3 +1,9 @@
+# @Author: Zhenhan Zhu (zhuzhenhan@nuaa.edu.cn)
+# @Date: 2025-12-08 19:30:14
+# @Last Modified by: Zhenhan Zhu
+# @Last Modified time: 2025-12-08 19:30:14
+
+
 import numpy as np
 from scipy.spatial import KDTree
 def get_box_corners(vehicle):

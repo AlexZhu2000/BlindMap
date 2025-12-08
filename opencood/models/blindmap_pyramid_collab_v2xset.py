@@ -1,7 +1,8 @@
-""" Author: Yifan Lu <yifan_lu@sjtu.edu.cn>
+# @Author: Zhenhan Zhu (zhuzhenhan@nuaa.edu.cn)
+# @Date: 2025-12-08 17:02:54
+# @Last Modified by: Zhenhan Zhu
+# @Last Modified time: 2025-12-08 17:02:54
 
-HEAL: An Extensible Framework for Open Heterogeneous Collaborative Perception 
-"""
 
 import torch
 import torch.nn as nn
@@ -19,9 +20,9 @@ from opencood.utils.model_utils import check_trainable_module, fix_bn, unfix_bn
 import importlib
 import torchvision
 import opencood.tools.inference_runtime_config as runtime_config
-class HeterPyramidCollabBlindmapV2xset(nn.Module):
+class BlindmapPyramidCollabV2xset(nn.Module):
     def __init__(self, args):
-        super(HeterPyramidCollabBlindmapV2xset, self).__init__()
+        super(BlindmapPyramidCollabV2xset, self).__init__()
         self.args = args
         modality_name_list = list(args.keys())
         modality_name_list = [x for x in modality_name_list if x.startswith("m") and x[1:].isdigit()] 
@@ -208,29 +209,29 @@ class HeterPyramidCollabBlindmapV2xset(nn.Module):
                                                 history_blind_maps=history_blind_maps
                                             )
         # ============= 可视化部分 =============
-        visualize = True
-        vis_channels = [0, 4, 12, 21, 32, 45, 57, 60]
-        if visualize and not self.training:
-            visualizer = CollaborativeFeatureVisualizer(
-                save_dir=os.path.join(runtime_config.saved_path, './visualization_results')
-            )
+        # visualize = True
+        # vis_channels = [0, 4, 12, 21, 32, 45, 57, 60]
+        # if visualize and not self.training:
+        #     visualizer = CollaborativeFeatureVisualizer(
+        #         save_dir=os.path.join(runtime_config.saved_path, './visualization_results')
+        #     )
         
-        # 对每个batch样本进行可视化
-        for batch_idx in range(len(record_len)):
-            visualizer.visualize_channel_features(
-                heter_feature_2d=heter_feature_2d,
-                fused_feature=fused_feature,
-                agent_modality_list=agent_modality_list,
-                record_len=record_len,
-                channel_indices=vis_channels,
-                sample_idx=batch_idx
-            )
+        # # 对每个batch样本进行可视化
+        # for batch_idx in range(len(record_len)):
+        #     visualizer.visualize_channel_features(
+        #         heter_feature_2d=heter_feature_2d,
+        #         fused_feature=fused_feature,
+        #         agent_modality_list=agent_modality_list,
+        #         record_len=record_len,
+        #         channel_indices=vis_channels,
+        #         sample_idx=batch_idx
+        #     )
             
-            # 计算并打印特征相似度
-            start_idx = sum(record_len[:batch_idx])
-            end_idx = start_idx + record_len[batch_idx]
-            sample_heter = heter_feature_2d[start_idx:end_idx]
-            sample_fused = fused_feature[batch_idx]
+        #     # 计算并打印特征相似度
+        #     start_idx = sum(record_len[:batch_idx])
+        #     end_idx = start_idx + record_len[batch_idx]
+        #     sample_heter = heter_feature_2d[start_idx:end_idx]
+        #     sample_fused = fused_feature[batch_idx]
             
             # similarity_metrics = visualizer.compute_feature_similarity(
             #     sample_heter, sample_fused

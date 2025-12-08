@@ -1,7 +1,7 @@
-name: HEAL_v2xset_Pyramid_m1_base #_fix_softmax
-root_dir: "dataset/V2XSET/train"
-validate_dir: "dataset/V2XSET/validate"
-test_dir: "dataset/V2XSET/test"
+name: BlindMap_v2xset_Pyramid_m1_base #_fix_softmax
+root_dir: "/home/zzh/projects/HEAL/dataset/V2XSET/train"
+validate_dir: "/home/zzh/projects/HEAL/dataset/V2XSET/validate"
+test_dir: "/home/zzh/projects/HEAL/dataset/V2XSET/test"
 
 noise_setting:
   add_noise: True
@@ -10,7 +10,6 @@ noise_setting:
     rot_std: 0.2
     pos_mean: 0
     rot_mean: 0    
-    
 
 yaml_parser: "load_general_params"
 train_params:
@@ -53,7 +52,7 @@ heter:
 
 
 fusion:
-  core_method: 'blindmapintermediateheterv2xset'
+  core_method: 'blindmapintermediatev2xset'
   dataset: 'v2xset'
   args: 
     proj_first: false
@@ -98,7 +97,7 @@ postprocess:
 
 # model related
 model:
-  core_method: heter_pyramid_collab_blindmap_v2xset
+  core_method: blindmap_pyramid_collab_v2xset
   args:
     lidar_range: *cav_lidar
     supervise_single: true

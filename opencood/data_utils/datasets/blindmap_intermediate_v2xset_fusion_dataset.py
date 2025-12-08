@@ -1,14 +1,7 @@
-'''
--*- coding: utf-8 -*-
-Author: Yifan Lu <yifan_lu@sjtu.edu.cn>
-License: TDG-Attribution-NonCommercial-NoDistrib
-
-intermediate heter fusion dataset
-
-Note that for DAIR-V2X dataset,
-Each agent should retrieve the objects itself, and merge them by iou, 
-instead of using the cooperative label.
-''' 
+# @Author: Zhenhan Zhu (zhuzhenhan@nuaa.edu.cn)
+# @Date: 2025-12-08 19:31:26
+# @Last Modified by: Zhenhan Zhu
+# @Last Modified time: 2025-12-08 19:31:26
 
 import random
 import math
@@ -42,7 +35,7 @@ from opencood.utils.common_utils import read_json
 from opencood.utils.heter_utils import Adaptor
 
 
-def getBlindmapintermediateheterFusionDataset(cls):
+def getBlindmapintermediatev2xsetFusionDataset(cls):
     """
     cls: the Basedataset.
     """
@@ -50,7 +43,7 @@ def getBlindmapintermediateheterFusionDataset(cls):
         def __init__(self, params, visualize, train=True):
             super().__init__(params, visualize, train)
             # intermediate and supervise single
-            print('----------getBlindmapintermediateheterFusionDataset-----------')
+            print('----------getBlindmapintermediatev2xsetFusionDataset-----------')
             self.supervise_single = True if ('supervise_single' in params['model']['args'] and params['model']['args']['supervise_single']) \
                                         else False
             self.proj_first = False if 'proj_first' not in params['fusion']['args']\
@@ -290,6 +283,43 @@ def getBlindmapintermediateheterFusionDataset(cls):
 
         def __getitem__(self, idx):
             base_data_dict = self.retrieve_base_data(idx)
+
+            #####################for history blindmap generation###################
+            # Get scenario index
+            scenario_index = 0
+            for i, ele in enumerate(self.len_record):
+                if idx < ele:
+                    scenario_index = i
+                    break
+                    
+            # Get timestamp index within this scenario
+            timestamp_index = idx if scenario_index == 0 else idx - self.len_record[scenario_index - 1]
+            
+            # Get scenario folder
+            scenario_folder = self.scenario_folders[scenario_index]
+            
+            # Get timestamp using return_timestamp_key
+            scenario_database = self.scenario_database[scenario_index]
+            timestamp = self.return_timestamp_key(scenario_database, timestamp_index)
+            
+            # Find ego vehicle id
+            ego_id = None
+            for cav_id, cav_content in base_data_dict.items():
+                if cav_content['ego']:
+                    ego_id = cav_id
+                    break
+            assert ego_id is not None
+            
+            # Store meta information
+            meta_info = {
+                'scenario_folder': scenario_folder,
+                'timestamp': timestamp,
+                'ego_id': ego_id,
+                'scenario_index': scenario_index,
+                'timestamp_index': timestamp_index,
+                'global_idx': idx
+            }
+            #####################for history blindmap generation###################
             base_data_dict = add_noise_data_dict(base_data_dict,self.params['noise_setting'])
 
             processed_data_dict = OrderedDict()
@@ -363,6 +393,88 @@ def getBlindmapintermediateheterFusionDataset(cls):
 
             if len(cav_id_list) == 0:
                 return None
+            ######################## blindmap ####################
+                # Initialize lists to store blind maps
+            blind_map_others_agent = []
+            history_blind_maps_others = []  # 存储非ego智能体的历史盲图
+            # Extract blind maps for ego and other agents
+            for i, cav_id in enumerate(cav_id_list):
+                selected_cav_base = base_data_dict[cav_id]
+                #兼容以前只有Infra的版本
+                if cav_id == -1:
+                    processed_data_dict['ego'].update({
+                        "blind_map_infra": selected_cav_base["blind_map"]
+                    })
+                else:
+                    processed_data_dict['ego'].update({
+                        "blind_map_infra": None
+                    })
+                # Store ego's blind map
+                if selected_cav_base['ego']:
+                    processed_data_dict['ego'].update({
+                        "blind_map_ego": selected_cav_base["blind_map"]
+                    })
+                else:
+                    # Store other agents' blind maps
+                    blind_map_others_agent.append(selected_cav_base["blind_map"])
+                    # Handle history blind maps
+                    if "history_blind_maps" in selected_cav_base:
+                        history_maps = selected_cav_base["history_blind_maps"]
+                        # print(f"cav_id: {cav_id}, history_maps len: {len(history_maps)}")
+                        # history_maps len: 3
+                        # Check if all history maps have the same shape
+                        # shape_set = set()
+                        # for map in history_maps:
+                        #     shape_set.add(map.shape)
+                        # if len(shape_set) > 1:
+                        #     print(f"Error: History maps for cav_id {cav_id} in {scenario_folder} have different shapes: {shape_set}")
+                        #     raise ValueError
+                        # Error: History maps for cav_id 418 in dataset/V2XSET/train/2021_08_23_20_47_11 have different shapes: {(256, 512), (1, 128, 256)}
+                        # Ensure history maps are padded to required length
+                        if len(history_maps) < self.history_num:
+                            pad_maps = [np.zeros(self.history_blindmap_shape) 
+                                    for _ in range(self.history_num - len(history_maps))]
+                            history_maps.extend(pad_maps)
+                        elif len(history_maps) > self.history_num:
+                            history_maps = history_maps[:self.history_num]
+                        
+                        # Convert to numpy array
+                        try:
+                            history_maps = np.stack(history_maps)  # (T, 1,H, W)
+                        # print(f"history_maps shape: {history_maps.shape}")  # (T, 1, H, W)
+                        # 3, 1, 128, 256
+                        except ValueError as e:
+                            print(f"Error stacking history maps for cav_id {cav_id} in {scenario_folder}: {e}")
+                            # print(f"history_maps content: {history_maps}")
+                            for i in range(len(history_maps)):
+                                print(f"history_maps[{i}] shape: {history_maps[i].shape}")
+                            print('history_maps len: ', len(history_maps))
+                            raise
+                        history_blind_maps_others.append(history_maps)
+                    else:
+                        # If no history blind maps, append an empty array
+                        print(f"Warning: No history blind maps for cav_id {cav_id} in {scenario_folder}")
+
+            # Stack other agents' blind maps if any exist
+            if blind_map_others_agent:
+                blind_map_others = np.stack(blind_map_others_agent)  # shape: (N, H, W)
+            else:
+                blind_map_others = np.array([])  # empty array if no other agents
+            # Stack history blind maps if any exist
+            if history_blind_maps_others:
+                history_blind_maps = np.stack(history_blind_maps_others)  # shape: (N, T, 1, H, W)
+            else:
+                history_blind_maps = np.array([])
+            # print('dataset blind_map_others shape: ', history_blind_maps.shape)
+            # (1, 3, 1, 256, 256) 、(2, 3, 1, 256, 256
+            # print("blind_map_others shape: ", blind_map_others.shape)
+            # 由于每个场景中agent数量不一致，所以blind_map_others.shape有变化，影响下方合并
+            # Update processed_data_dict with other agents' blind maps
+            processed_data_dict['ego'].update({
+                "blind_map_others_agent": blind_map_others,
+                "history_blind_maps": history_blind_maps
+            })
+            #####################################################
 
             for cav_id in exclude_agent:
                 base_data_dict.pop(cav_id)
@@ -407,6 +519,7 @@ def getBlindmapintermediateheterFusionDataset(cls):
                                                 self.proj_first)
 
             lidar_poses = np.array(lidar_pose_list).reshape(-1, 6)  # [N_cav, 6]
+            # print('lidar_poses shape: ', lidar_poses.shape)
             lidar_poses_clean = np.array(lidar_pose_clean_list).reshape(-1, 6)  # [N_cav, 6]
             
             # merge preprocessed features from different cavs into the same dict
@@ -550,12 +663,12 @@ def getBlindmapintermediateheterFusionDataset(cls):
                 'pairwise_t_matrix': pairwise_t_matrix,
                 'lidar_poses_clean': lidar_poses_clean,
                 'lidar_poses': lidar_poses,
-                "blind_map_ego": base_data_dict[0][
-                    "blind_map"
-                ],  # ego vehicle blind map
-                "blind_map_infra": base_data_dict[1][
-                    "blind_map"
-                ],  # infrastructure blind map
+                # "blind_map_ego": base_data_dict[0][
+                #     "blind_map"
+                # ],  # ego vehicle blind map
+                # "blind_map_infra": base_data_dict[1][
+                #     "blind_map"
+                # ],  # infrastructure blind map
                 })
 
 
@@ -566,6 +679,7 @@ def getBlindmapintermediateheterFusionDataset(cls):
 
 
             processed_data_dict['ego'].update({'sample_idx': idx,
+                                               'meta_info': meta_info,
                                                 'cav_id_list': cav_id_list})
 
             return processed_data_dict
@@ -598,10 +712,17 @@ def getBlindmapintermediateheterFusionDataset(cls):
 
             # pairwise transformation matrix
             pairwise_t_matrix_list = []
+
+            # Add new lists for meta info
+            meta_info_list = []
+            cav_id_lists = []
             ######################## BlindMap ########################
             # Separate lists for ego and infra blind maps
             blind_map_ego_list = []
             blind_map_infra_list = []
+            blind_map_others_list = []
+            # Add new lists for history blind maps
+            history_blind_maps_list = []
             # disconet
             teacher_processed_lidar_list = []
             
@@ -615,6 +736,11 @@ def getBlindmapintermediateheterFusionDataset(cls):
 
             for i in range(len(batch)):
                 ego_dict = batch[i]['ego']
+                # Collect meta info and cav_id_list
+                meta_info_list.append(ego_dict['meta_info'])
+                cav_id_lists.append(ego_dict['cav_id_list'])
+
+
                 object_bbx_center.append(ego_dict['object_bbx_center'])
                 object_bbx_mask.append(ego_dict['object_bbx_mask'])
                 object_ids.append(ego_dict['object_ids'])
@@ -623,7 +749,14 @@ def getBlindmapintermediateheterFusionDataset(cls):
                 ######################## BlindMap ########################
                 # Collect blind maps from both views
                 blind_map_ego_list.append(ego_dict["blind_map_ego"])
-                blind_map_infra_list.append(ego_dict["blind_map_infra"])
+                # blind_map_infra_list.append(ego_dict["blind_map_infra"])
+                blind_map_others_list.append(ego_dict["blind_map_others_agent"])
+                # Collect history blind maps
+                if 'history_blind_maps' in ego_dict and ego_dict['history_blind_maps'].size > 0:
+                    # print('ego_dict[history_blind_maps] shape', ego_dict['history_blind_maps'].shape)
+                    # (non—ego, 3, 1, 128, 256)
+                    history_blind_maps_list.append(ego_dict['history_blind_maps'])
+                ######################## BlindMap ########################
                 for modality_name in self.modality_name_list:
                     if ego_dict[f'input_{modality_name}'] is not None:
                         eval(f"inputs_list_{modality_name}").append(ego_dict[f'input_{modality_name}']) # OrderedDict() if empty?
@@ -660,7 +793,16 @@ def getBlindmapintermediateheterFusionDataset(cls):
             ######################## BlindMap ########################
             # Convert to tensors
             blind_maps_ego = torch.from_numpy(np.array(blind_map_ego_list))  # (B, H, W)
-            blind_maps_infra = torch.from_numpy(np.array(blind_map_infra_list))  # (B, H, W)
+            # blind_maps_infra = torch.from_numpy(np.array(blind_map_infra_list))  # (B, H, W)
+            blind_maps_others = torch.from_numpy(np.concatenate(blind_map_others_list, axis=0))  # (sum(CAV), N, H, W)
+            # print("blind_maps_others shape: ", blind_maps_others.shape)
+            # torch.Size([sum(CAV), 256, 512]
+            # Convert history blind maps to tensor if any exist
+            if history_blind_maps_list:
+                history_blind_maps = torch.from_numpy(np.concatenate(history_blind_maps_list, axis=0))
+            else:
+                # Create empty tensor with correct shape if no history maps
+                history_blind_maps = torch.empty((0, self.history_num) + self.history_blindmap_shape)
             # 2023.2.5
             for modality_name in self.modality_name_list:
                 if len(eval(f"inputs_list_{modality_name}")) != 0:
@@ -693,7 +835,8 @@ def getBlindmapintermediateheterFusionDataset(cls):
             label_torch_dict['pairwise_t_matrix'] = pairwise_t_matrix
             label_torch_dict['record_len'] = record_len
             
-
+            # print('history_blind_maps shape: ', history_blind_maps.shape)
+            #  history_blind_maps shape:  torch.Size([7, 3, 1, 128, 256])
             # object id is only used during inference, where batch size is 1.
             # so here we only get the first element.
             output_dict['ego'].update({'object_bbx_center': object_bbx_center,
@@ -706,9 +849,14 @@ def getBlindmapintermediateheterFusionDataset(cls):
                                     'lidar_pose': lidar_pose,
                                     'anchor_box': self.anchor_box_torch,
                                     "blind_map_ego": blind_maps_ego,
-                                    "blind_map_infra": blind_maps_infra,
-                                    "blind_maps_gt": blind_maps_infra,
+                                    # "blind_map_infra": blind_maps_infra,
+                                    "blind_maps_gt": blind_maps_others,
+                                    'history_blind_maps': history_blind_maps,  # shape: (sum(non_ego_cav), T, H, W)
+                                    # Add meta info and cav_id_list to output
+                                    'meta_info_list': meta_info_list,
+                                    'cav_id_lists': cav_id_lists
                                     })
+            # self.visualize_batch_blindmaps(blind_maps_ego, blind_maps_others, record_len)
             
 
 
@@ -775,15 +923,15 @@ def getBlindmapintermediateheterFusionDataset(cls):
                 "cav_id_list": batch[0]['ego']['cav_id_list'],
                 "agent_modality_list": batch[0]['ego']['agent_modality_list'],
                 # Add blind map directly from batch since batch size is 1
-                "blind_map_ego": torch.from_numpy(
-                    batch[0]["ego"]["blind_map_ego"]
-                ).unsqueeze(0),
-                "blind_map_infra": torch.from_numpy(
-                    batch[0]["ego"]["blind_map_infra"]
-                ).unsqueeze(0),
-                "blind_maps_gt": torch.from_numpy(
-                    batch[0]["ego"]["blind_map_infra"]
-                ).unsqueeze(0),  # Use infra blind map as GT
+                # "blind_map_ego": torch.from_numpy(
+                #     batch[0]["ego"]["blind_map_ego"]
+                # ).unsqueeze(0),
+                # "blind_map_infra": torch.from_numpy(
+                #     batch[0]["ego"]["blind_map_infra"]
+                # ).unsqueeze(0),
+                # "blind_maps_gt": torch.from_numpy(
+                #     batch[0]["ego"]["blind_map_infra"]
+                # ).unsqueeze(0),  # Use infra blind map as GT
             })
 
             return output_dict
@@ -813,7 +961,81 @@ def getBlindmapintermediateheterFusionDataset(cls):
             gt_box_tensor = self.post_processor.generate_gt_bbx(data_dict)
 
             return pred_box_tensor, pred_score, gt_box_tensor
-
+        
+        def visualize_batch_blindmaps(self, blind_maps_ego, blind_maps_others, record_len):
+            """
+            Visualize blind maps for each agent in each batch
+            
+            Parameters
+            ----------
+            blind_maps_others : torch.Tensor
+                Shape (sum(cav), H, W) containing all agents' blind maps
+            record_len : torch.Tensor 
+                Shape (B,) containing number of agents in each batch
+            """
+            # 只在主进程中可视化
+            if not hasattr(self, 'is_main_process'):
+                worker_info = torch.utils.data.get_worker_info()
+                self.is_main_process = worker_info is None or worker_info.id == 0
+                
+            if not self.is_main_process:
+                return
+            import matplotlib.pyplot as plt
+            if isinstance(blind_maps_ego, torch.Tensor):
+                blind_maps_ego = blind_maps_ego.cpu().numpy()
+            if isinstance(blind_maps_others, torch.Tensor):
+                blind_maps_others = blind_maps_others.cpu().numpy()
+            if isinstance(record_len, torch.Tensor):
+                record_len = record_len.cpu().numpy()
+                
+            # Calculate cumulative sum for indexing other agents
+            cumsum = np.cumsum(np.concatenate([[0], record_len-1]))  # -1 because we don't count ego
+            batch_size = len(record_len)
+            
+            for b in range(batch_size):
+                # Get blind maps for current batch
+                ego_map = blind_maps_ego[b]  # (H, W)
+                start_idx = cumsum[b]
+                end_idx = cumsum[b+1]
+                other_maps = blind_maps_others[start_idx:end_idx]  # (N-1, H, W)
+                
+                # Total number of agents (ego + others)
+                n_total = 1 + len(other_maps)
+                n_cols = min(5, n_total)  # Max 5 columns
+                n_rows = (n_total + n_cols - 1) // n_cols
+                
+                # Create figure
+                fig = plt.figure(figsize=(4*n_cols + 1, 4*n_rows + 1))
+                
+                # Create subplot grid
+                grid = plt.GridSpec(n_rows, n_cols, figure=fig)
+                grid.update(wspace=0.3, hspace=0.3)
+                
+                # Plot ego's blind map first
+                ax = fig.add_subplot(grid[0, 0])
+                im = ax.imshow(ego_map, cmap='viridis')
+                ax.set_title('Ego Vehicle')
+                ax.axis('off')
+                
+                # Plot other agents' blind maps
+                for i in range(len(other_maps)):
+                    row = (i+1) // n_cols
+                    col = (i+1) % n_cols
+                    ax = fig.add_subplot(grid[row, col])
+                    
+                    im = ax.imshow(other_maps[i], cmap='viridis')
+                    ax.set_title(f'Agent {i+1}')
+                    ax.axis('off')
+                
+                # Add colorbar
+                plt.colorbar(im, ax=fig.axes)
+                
+                # Add title
+                plt.suptitle(f'Batch {b}: Blind Maps for Ego + {len(other_maps)} Agents')
+                
+                # Show plot and wait for window to be closed
+                plt.show(block=True)
+                plt.close()
 
     return IntermediateheterFusionDataset
 
