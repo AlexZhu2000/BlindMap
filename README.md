@@ -164,11 +164,12 @@ python opencood/tools/inference.py --model_dir ${CHECKPOINT_FOLDER} [--fusion_me
 
 ## Citation
 ```
-@inproceedings{
-lu2024an,
-title={An Extensible Framework for Open Heterogeneous Collaborative Perception},
-author={Lu, Yifan and Hu, Yue and Zhong, Yiqi and Wang, Dequan and Chen, Siheng and Wang, Yanfeng},
-booktitle={The Twelfth International Conference on Learning Representations},
-year={2024},
+
+@inproceedings{your2026blindmap,
+  title={BlindMap: Explicit Blind-Area Prediction and Request-Free Communication for Efficient Cooperative Perception},
+  author={Zhu, Zhenhan and Jiang, Yihang and Zhao, Yanchao},
+  booktitle={Proceedings of IEEE INFOCOM},
+  year={2026},
+  note={To appear}
 }
 ```
