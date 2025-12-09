@@ -3,10 +3,10 @@ This repository provides the official implementation of **BlindMap**, a new coop
 
 BlindMap is designed for real-time, deadline-constrained V2X collaborative perception, addressing the two fundamental limitations of prior systems:
 
-- Ego-centric region selection is inaccurate
+- Ego-centric region selection is inaccurate.
 Existing methods rely on uncertainty maps or attention—both ego-centric, unable to understand what is actually occluded from the ego viewpoint.
 
-- Communication depends on request-response loops
+- Communication depends on request-response loops.
 This tight coupling between ego perception → request → collaborator response makes global collaboration latency uncontrollable.
 
 BlindMap introduces a new communication paradigm:
@@ -48,7 +48,7 @@ BlindMap introduces a new communication paradigm:
 
 
 ## Data Preparation
-- OPV2V: Please refer to [this repo](https://github.com/DerrickXuNu/OpenCOOD). You also need to download `additional-001.zip` which stores data for camera modality.
+- OPV2V: Please refer to [this repo](https://github.com/DerrickXuNu/OpenCOOD). 
 - OPV2V-H: We store our data in [Huggingface Hub](https://huggingface.co/datasets/yifanlu/OPV2V-H). Please refer to [Downloading datasets](https://huggingface.co/docs/hub/datasets-downloading) tutorial for the usage.
 - V2XSet: Please refer to [this repo](https://github.com/DerrickXuNu/v2x-vit).
 - DAIR-V2X-C: Download the data from [this page](https://thudair.baai.ac.cn/index). We use complemented annotation, so please also follow the instruction of [this page](https://siheng-chen.github.io/dataset/dair-v2x-c-complemented/). 
@@ -145,7 +145,7 @@ given, the trainer will discard the `hypes_yaml` and load the `config.yaml` in t
 
 ### Test the model
 ```python
-python opencood/tools/inference.py --model_dir ${CHECKPOINT_FOLDER} [--fusion_method intermediate]
+python opencood/tools/inference.py --model_dir ${CHECKPOINT_FOLDER} [--fusion_method intermediate] [--comm_volume_MB 1] [--comm_thre 0.1] 
 ```
 - `inference.py` has more optional args, you can inspect into this file.
 - `[--fusion_method intermediate]` the default fusion method is intermediate fusion. According to your fusion strategy in training, available fusion_method can be:
@@ -154,12 +154,12 @@ python opencood/tools/inference.py --model_dir ${CHECKPOINT_FOLDER} [--fusion_me
   - **late**: late fusion detection from all agents, all agents' fused gt box.  *[only for late fusion dataset]*
   - **early**: early fusion detection from all agents, all agents' fused gt box. *[only for early fusion dataset]*
   - **intermediate**: intermediate fusion detection from all agents, all agents' fused gt box. *[only for intermediate fusion dataset]*
+- `[--comm_volume_MB 1]`defaults to 1, meaning the communication payload is limited to 1 MB.
+- `[--comm_thre 0.1]` defaults to 0, meaning the model will select and transmit features whose communication confidence values are greater than 0.
+## Acknowledgements
+Thank for the excellent cooperative perception codebases [OpenCOOD](https://github.com/DerrickXuNu/OpenCOOD).
 
-
-## BlindMap's Train Command
-<div align="center">
-<img src="images/system_final.jpg" width="80%" >
-</div>
+Thank for the excellent cooperative perception datasets [DAIR-V2X](https://thudair.baai.ac.cn/index), [OPV2V](https://mobility-lab.seas.ucla.edu/opv2v/) and [V2X-SIM](https://ai4ce.github.io/V2X-Sim/).
 
 
 ## Citation
