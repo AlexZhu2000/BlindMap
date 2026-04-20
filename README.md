@@ -82,7 +82,7 @@ BlindMap/dataset
 conda create -n BlindMap python=3.8
 conda activate BlindMap
 # install pytorch. 
-conda create -n coalign python=3.8 pytorch==1.12.0 torchvision==0.13.0 torchaudio==0.12.0 cudatoolkit=11.6 -c pytorch -c conda-forge
+conda create -n BlindMap python=3.8 pytorch==1.12.0 torchvision==0.13.0 torchaudio==0.12.0 cudatoolkit=11.6 -c pytorch -c conda-forge
 # install dependency
 pip install -r requirements.txt
 # install this project. It's OK if EasyInstallDeprecationWarning shows up.
