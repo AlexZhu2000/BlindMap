@@ -1,8 +1,8 @@
 name: HeterBaseline_opv2v_camera_pyramid
-root_dir: "dataset/OPV2V/train"
-validate_dir: "dataset/OPV2V/validate"
-test_dir: "dataset/OPV2V/test"
-
+root_dir: "/home/zzh/projects/HEAL/dataset/OPV2V/train"
+validate_dir: "/home/zzh/projects/HEAL/dataset/OPV2V/validate"
+test_dir: "/home/zzh/projects/HEAL/dataset/OPV2V/test"
+use_history: False
 yaml_parser: "load_general_params"
 train_params:
   batch_size: &batch_size 1
@@ -171,7 +171,10 @@ loss:
     pyramid:
       relative_downsample: [1, 2, 4]
       weight: [0.4, 0.2, 0.1]
-
+blindmap_loss:
+  core_method: "blindmap_loss"
+  args:
+    blind_map_loss_weight: 1
 
 optimizer:
   core_method: Adam

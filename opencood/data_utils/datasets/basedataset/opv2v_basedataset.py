@@ -90,6 +90,12 @@ class OPV2VBaseDataset(Dataset):
                                             else self.generate_object_center_camera
         self.generate_object_center_single = self.generate_object_center # will it follows 'self.generate_object_center' when 'self.generate_object_center' change?
 
+        # Optional receiver-conditioned evaluation controls. They are inactive
+        # unless explicitly set by an analysis script/yaml.
+        self.forced_ego_id = str(params["forced_ego_id"]) if params.get("forced_ego_id", None) is not None else None
+        keep_cav_ids = params.get("keep_cav_ids", None)
+        self.keep_cav_ids = [str(x) for x in keep_cav_ids] if keep_cav_ids else None
+
         if self.load_camera_file:
             self.data_aug_conf = params["fusion"]["args"]["data_aug_conf"]
 
@@ -111,6 +117,35 @@ class OPV2VBaseDataset(Dataset):
         self.scenario_folders = scenario_folders
         self.reinitialize()
 
+    def get_ordered_cav_list(self, scenario_folder):
+        """
+        Return the CAV order used by this dataset.
+
+        By default this preserves the original policy: sorted CAV ids, with a
+        negative roadside unit moved behind vehicles so it cannot be ego. For
+        controlled receiver-conditioned experiments, ``forced_ego_id`` can be
+        moved to the front and ``keep_cav_ids`` can restrict the scene to a
+        fixed ego/collaborator subset.
+        """
+        cav_list = sorted([x for x in os.listdir(scenario_folder)
+                           if os.path.isdir(os.path.join(scenario_folder, x))])
+        assert len(cav_list) > 0
+
+        if int(cav_list[0]) < 0:
+            cav_list = cav_list[1:] + [cav_list[0]]
+
+        if self.keep_cav_ids is not None:
+            keep_set = set(self.keep_cav_ids)
+            filtered_cav_list = [cav_id for cav_id in cav_list if cav_id in keep_set]
+            if filtered_cav_list:
+                cav_list = filtered_cav_list
+
+        if self.forced_ego_id is not None and self.forced_ego_id in cav_list:
+            cav_list = [self.forced_ego_id] + [
+                cav_id for cav_id in cav_list if cav_id != self.forced_ego_id
+            ]
+
+        return cav_list
 
     def reinitialize(self):
         # Structure: {scenario_id : {cav_1 : {timestamp1 : {yaml: path,
@@ -122,34 +157,18 @@ class OPV2VBaseDataset(Dataset):
         for (i, scenario_folder) in enumerate(self.scenario_folders):
             self.scenario_database.update({i: OrderedDict()})
 
-            # at least 1 cav should show up
-            if self.train:
-                cav_list = [x for x in os.listdir(scenario_folder)
-                            if os.path.isdir(
-                        os.path.join(scenario_folder, x))]
-                cav_list = sorted(cav_list)  ###为了方便时序BLindmap的离线生成，需要确定ego车辆，所以取消shuffle
-                # random.shuffle(cav_list)
-            else:
-                cav_list = sorted([x for x in os.listdir(scenario_folder)
-                                   if os.path.isdir(
-                        os.path.join(scenario_folder, x))])
-            assert len(cav_list) > 0
+            cav_list = self.get_ordered_cav_list(scenario_folder)
 
-            """
-            roadside unit data's id is always negative, so here we want to
-            make sure they will be in the end of the list as they shouldn't
-            be ego vehicle.
-            """
-            
             """
             make the first cav to be ego modality
             """
+            # NOTE: reorder_cav_list is commented out to maintain consistency with 
+            # pre-generated history blindmap files. If you enable this, you must 
+            # regenerate all history blindmap files with the same ego selection logic!
             # if getattr(self, "heterogeneous", False):
             #     # print('use heterogeneous data')
             #     scenario_name = scenario_folder.split("/")[-1]
             #     cav_list = self.adaptor.reorder_cav_list(cav_list, scenario_name)
-            if int(cav_list[0]) < 0:
-                cav_list = cav_list[1:] + [cav_list[0]]
             # print("cav_list:", cav_list)
             # loop over all CAV data
             for (j, cav_id) in enumerate(cav_list):
@@ -317,15 +336,11 @@ class OPV2VBaseDataset(Dataset):
         data = OrderedDict()
 
 
-        # Get ego id - should be the first CAV in sorted list
-        cav_list = sorted([x for x in os.listdir(scenario_folder)
-                        if os.path.isdir(os.path.join(scenario_folder, x))])
-        if int(cav_list[0]) < 0:  # Handle roadside unit case
-            cav_list = cav_list[1:] + [cav_list[0]]
-            
-        ego_id = cav_list[0]  # First CAV is always ego
+        # The first CAV in scenario_database is the active ego. This can be
+        # controlled by forced_ego_id for receiver-conditioned analysis.
+        ego_id = list(scenario_database.keys())[0]
         
-        # Verify ego id
+        # Verify ego id matches scenario_database
         assert scenario_database[ego_id]['ego'], f"Expected {ego_id} to be ego vehicle"
         # Get history timestamps
         history_timestamps = self.get_history_timestamps(scenario_database, curr_timestamp_key, self.history_num)

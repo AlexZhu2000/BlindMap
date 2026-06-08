@@ -5,6 +5,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from opencood.models.sub_modules.base_bev_backbone_resnet import ResNetBEVBackbone
 from opencood.models.sub_modules.resblock import ResNetModified, Bottleneck, BasicBlock
@@ -15,87 +16,49 @@ from opencood.visualization.debug_plot import plot_feature
 
 def calc_comm_mask_multilevel(scores_list, comm_volume_MB, bev_channels_list):
     """
-    Calculate communication masks for all levels based on a total communication volume limit
-    
-    Args:
-        scores_list: list of tensors, each of shape [N, 1, H_i, W_i] for level i
-        comm_volume_MB: comm volume limit (MB)
-        bev_channels_list: BEV feature channels [c1, c2, c3]
-        # feature shape torch.Size([4, 64, 128, 256])
-        # feature shape torch.Size([4, 128, 64, 128])
-        # feature shape torch.Size([4, 256, 32, 64])
-    Return:
-        comm_masks_list: list of tensors, each of shape [N, 1, H_i, W_i] for level i
-        comm_rate: overall communication rate
+    Calculate communication masks using the same accounting as BlindMap.
+
+    A single high-resolution BEV mask is selected from level-0 confidence
+    scores, while the communication budget accounts for all pyramid feature
+    levels. The selected mask is resized to lower-resolution levels.
     """
-    N = scores_list[0].shape[0]
-    device = scores_list[0].device
-    
-    # Calculate sizes of features at each level
-    sizes = []
-    for i, score in enumerate(scores_list):
-        _, _, H, W = score.shape
-        # Calculate feature size in bytes (float32 = 4 bytes per element)
-        level_size = H * W * bev_channels_list[i] * 4
-        sizes.append(level_size)
-    
-    # Total size of all features
-    total_size = sum(sizes)
-    
-    # Calculate overall communication rate based on volume limit
-    comm_rate = min(1.0, comm_volume_MB * 1024 * 1024 / total_size)
-    
-    # Create masks for all levels
-    masks_list = []
-    
-    # Calculate importance scores across all levels
-    all_scores = []
-    level_indices = []
-    
-    for level_idx, score in enumerate(scores_list):
-        # 初始化该级别的掩码
-        masks_list.append(torch.zeros_like(score))
-        for i in range(N):
-            if i % 2 != 0:  # Only for non-ego vehicles
-                flat_score = score[i].view(-1)
-                all_scores.append(flat_score)
-                # Remember which level and which spatial position each score came from
-                level_indices.append((level_idx, i, score[i].shape))
-    
-    # Concatenate all scores
-    if all_scores:
-        all_scores_tensor = torch.cat(all_scores)
-        
-        # Calculate how many elements to keep total
-        total_elements = all_scores_tensor.numel()
-        k_total = max(1, int(comm_rate * total_elements))
-        
-        # Get top k indices globally
-        _, top_indices = torch.topk(all_scores_tensor, k=min(k_total, total_elements))
-        
-        # Create a mask for the flattened tensor
-        global_mask = torch.zeros_like(all_scores_tensor)
-        global_mask[top_indices] = 1
-        
-        # Split the mask back to individual levels and reshape
-        start_idx = 0
-        
-        # Fill in the masks
-        for (level_idx, agent_idx, original_shape) in level_indices:
-            end_idx = start_idx + original_shape.numel()
-            agent_mask = global_mask[start_idx:end_idx].view(original_shape)
-            masks_list[level_idx][agent_idx] = agent_mask
-            start_idx = end_idx
+    base_score = scores_list[0]
+    N, _, H, W = base_score.shape
+
+    if len(bev_channels_list) != len(scores_list):
+        per_agent_full_bytes = H * W * bev_channels_list[0] * 4
     else:
-        # If no non-ego vehicles, create empty masks
-        masks_list = [torch.zeros_like(score) for score in scores_list]
-    
-    # For ego vehicles (i==0), use full feature
-    for level_idx, mask in enumerate(masks_list):
-        for i in range(N):
-            if i % 2 == 0:  # Ego vehicles
-                masks_list[level_idx][i] = torch.ones_like(masks_list[level_idx][i])
-    
+        per_agent_full_bytes = 0
+        for level_idx, score in enumerate(scores_list):
+            _, _, level_h, level_w = score.shape
+            per_agent_full_bytes += level_h * level_w * bev_channels_list[level_idx] * 4
+
+    num_collab_agents = max(N - 1, 0)
+    if num_collab_agents == 0:
+        comm_rate = 0.0
+    else:
+        total_full_bytes = per_agent_full_bytes * num_collab_agents
+        comm_rate = min(1.0, comm_volume_MB * 1024 * 1024 / total_full_bytes)
+    k = max(1, int(comm_rate * H * W))
+
+    base_mask = torch.zeros_like(base_score)
+    base_mask[0] = torch.ones_like(base_mask[0])
+    for agent_idx in range(1, N):
+        flat_score = base_score[agent_idx].reshape(-1)
+        _, indices = torch.topk(flat_score, k=min(k, flat_score.numel()))
+        flat_mask = torch.zeros_like(flat_score)
+        flat_mask[indices] = 1
+        base_mask[agent_idx] = flat_mask.view_as(base_score[agent_idx])
+
+    masks_list = [base_mask]
+    for score in scores_list[1:]:
+        resized_mask = F.interpolate(
+            base_mask,
+            size=score.shape[-2:],
+            mode="nearest",
+        )
+        masks_list.append(resized_mask)
+
     return masks_list, comm_rate
 def weighted_fuse(x, score, record_len, affine_matrix, align_corners):
     """
@@ -300,4 +263,5 @@ class PyramidFusion(ResNetBEVBackbone):
         fused_feature = self.decode_multiscale_feature(fused_feature_list)
 
         
+        self.last_comm_rate = comm_rate
         return fused_feature, occ_map_list 

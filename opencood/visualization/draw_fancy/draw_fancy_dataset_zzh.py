@@ -20,11 +20,11 @@ from opencood.utils.pose_utils import generate_noise
 
 class ZZHSimpleDataset(Dataset):
     def __init__(self,
-                 root_dir="/home/node/code/zzh/HEAL/dataset/V2XSET/train"):
+                 root_dir="/home/zzh/projects/HEAL/dataset/V2XSET/train"):
         
         print("Dataset dir:", root_dir)
         self.max_cav =5
-
+        self.root_dir = root_dir
         # first load all paths of different scenarios
         scenario_folders = sorted([os.path.join(root_dir, x)
                                    for x in os.listdir(root_dir) if
@@ -175,13 +175,19 @@ class ZZHSimpleDataset(Dataset):
         for cav_id, cav_content in scenario_database.items():
             data[cav_id] = OrderedDict()
             data[cav_id]['ego'] = cav_content['ego']
-
+            
             # todo: load camera image in the future version
             # load the corresponding data into the dictionary
             data[cav_id]['params'] = \
                 load_yaml(cav_content[timestamp_key]['yaml'])
-            # data[cav_id]['params_occlude'] = \
-            #     load_yaml(cav_content[timestamp_key]['yaml'].replace('.yaml', '_occlude.yaml'))
+            
+            # Load occluded state file
+            occluded_file = cav_content[timestamp_key]['yaml'].replace(".yaml", "_occluded_state.yaml")
+            if os.path.exists(occluded_file):
+                data[cav_id]['params_occluded_state'] = load_yaml(occluded_file)
+            else:
+                print(f"Warning: occluded state file not found: {occluded_file}")
+            
             data[cav_id]['lidar_np'] = \
                 pcd_utils.pcd_to_np(cav_content[timestamp_key]['lidar'])
 
@@ -255,7 +261,7 @@ class ZZHSimpleDataset(Dataset):
             The timestamp of the CAV.
         """
        # first load all paths of different scenarios
-        root_dir="/home/node/code/zzh/HEAL/dataset/V2XSET/train"
+        root_dir = self.root_dir
         scenario_folders = sorted([os.path.join(root_dir, x)
                                    for x in os.listdir(root_dir) if
                                    os.path.isdir(os.path.join(root_dir, x))])
@@ -272,11 +278,19 @@ class ZZHSimpleDataset(Dataset):
                 
                 # 加载yaml和点云数据
                 data[cav_id]['params'] = load_yaml(cav_content[timestamp]['yaml'])
+                
+                # 加载occluded state数据
+                occluded_file = cav_content[timestamp]['yaml'].replace(".yaml", "_occluded_state.yaml")
+                if os.path.exists(occluded_file):
+                    data[cav_id]['params_occluded_state'] = load_yaml(occluded_file)
+                else:
+                    print(f"Warning: occluded state file not found for {cav_id} at {timestamp}")
+                
                 data[cav_id]['lidar_np'] = pcd_utils.pcd_to_np(cav_content[timestamp]['lidar'])
         return data
 if __name__ == '__main__':
     noisy = False
-    dataset = SimpleDataset()
+    dataset = ZZHSimpleDataset()
     idx = 0
     
     data_dict = dataset[idx]

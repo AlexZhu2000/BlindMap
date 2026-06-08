@@ -279,7 +279,14 @@ class DAIRV2XBaseDataset(Dataset):
 
             blind_map = np.zeros((self.grid_size_y, self.grid_size_x))
             for label in labels:
-                if int(label["occluded_state"]) > 0 or "rotation" not in label.keys():
+                # FIXED: Only fill blindmap when occluded_state > 0
+                # The original condition "or 'rotation' not in label.keys()" was causing
+                # all vehicles without rotation field to be marked as blind areas,
+                # leading to high values in blank regions especially for camera modality
+                if int(label["occluded_state"]) > 0:
+                    # Skip if world_8_points is not available
+                    if "world_8_points" not in label:
+                        continue
                     # Transform world_8_points to agent coordinate
                     world_8_points = np.array(label["world_8_points"]).reshape((8, 3))
                     world_8_points_homo = np.concatenate(
@@ -292,6 +299,19 @@ class DAIRV2XBaseDataset(Dataset):
                     blind_map = self.fill_box_in_blindmap(blind_map, agent_8_points)
 
             data[agent_id]["blind_map"] = blind_map
+            # import matplotlib.pyplot as plt
+            # # Visualize blind map for debugging - blocks execution until window is closed
+            # fig = plt.figure(figsize=(10, 8))
+            # plt.imshow(blind_map, cmap='hot', interpolation='nearest')
+            # plt.colorbar(label='Blind Map Value')
+            # plt.title(f'Blind Map - Agent {agent_id} ({"Ego Vehicle" if agent_id == 0 else "Infrastructure"}) - Frame {veh_frame_id}')
+            # plt.xlabel('X Grid')
+            # plt.ylabel('Y Grid')
+            # plt.tight_layout()
+            # print(f"\n[DEBUG] Showing Blind Map for Agent {agent_id}. Close the window to continue...")
+            # plt.show(block=True)  # This blocks execution until you close the window
+            # plt.close(fig)
+            # print(f"[DEBUG] Window closed. Continuing execution...")
 
 
 
@@ -308,20 +328,26 @@ class DAIRV2XBaseDataset(Dataset):
             # data[0]['modality_name'] = 'm2'
             # data[1]['modality_name'] = 'm1'
 
-            if self.train: # randomly choose RSU or Veh to be Ego
-                p = np.random.rand()
-                if p > 0.5:
-                    data[0], data[1] = data[1], data[0]
-                    data[0]['ego'] = True
-                    data[1]['ego'] = False
-            else:
-                # evaluate, the agent of ego modality should be ego
-                if self.adaptor.mapping_dict[data[0]['modality_name']] not in self.ego_modality and \
-                    self.adaptor.mapping_dict[data[1]['modality_name']] in self.ego_modality:
-                    data[0], data[1] = data[1], data[0]
-                    data[0]['ego'] = True
-                    data[1]['ego'] = False
-
+            # if self.train: # randomly choose RSU or Veh to be Ego
+            #     p = np.random.rand()
+            #     if p > 0.5:
+            #         data[0], data[1] = data[1], data[0]
+            #         data[0]['ego'] = True
+            #         data[1]['ego'] = False
+            # else:
+            #     # evaluate, the agent of ego modality should be ego
+            #     if self.adaptor.mapping_dict[data[0]['modality_name']] not in self.ego_modality and \
+            #         self.adaptor.mapping_dict[data[1]['modality_name']] in self.ego_modality:
+            #         data[0], data[1] = data[1], data[0]
+            #         data[0]['ego'] = True
+            #         data[1]['ego'] = False
+            p = np.random.rand()
+            if p > 0.5:
+                data[0], data[1] = data[1], data[0]
+                data[0]['ego'] = True
+                data[1]['ego'] = False
+            # data[0]['ego'] = True
+            # data[1]['ego'] = False
             data[0]['modality_name'] = self.adaptor.reassign_cav_modality(data[0]['modality_name'], 0)
             data[1]['modality_name'] = self.adaptor.reassign_cav_modality(data[1]['modality_name'], 1)
         

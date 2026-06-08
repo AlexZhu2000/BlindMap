@@ -212,5 +212,7 @@ class HeterPyramidCollab(nn.Module):
         
         output_dict.update({'occ_single_list': 
                             occ_outputs})
+        if hasattr(self.pyramid_backbone, 'last_comm_rate'):
+            output_dict.update({'comm_rate': self.pyramid_backbone.last_comm_rate})
 
         return output_dict

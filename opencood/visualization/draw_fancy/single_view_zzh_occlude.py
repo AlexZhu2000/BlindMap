@@ -1,6 +1,7 @@
 
 from email.mime import base
 from tkinter import Y
+import cv2
 
 # from black import left_hand_split
 from opencood.utils.transformation_utils import x_to_world, x1_to_x2
@@ -10,6 +11,7 @@ from matplotlib import pyplot as plt
 import matplotlib
 import matplotlib.patches as mpatches
 import opencood.visualization.simple_plot3d.canvas_3d as canvas_3d
+import opencood.visualization.simple_plot3d.canvas_bev as canvas_bev
 import numpy as np
 import os
 import copy
@@ -201,9 +203,119 @@ def generate_object_center(cav_contents,
 
     return object_np, near_indices
 
+def get_vehiclecornors_in_ego_lidar(vehicle, ego_pose):
+    """Get vehicle corners in ego lidar coordinate system"""
+    loc = vehicle['location']
+    center = vehicle.get('center', [0, 0, 0])
+    angles = vehicle['angle']
+    
+    # Construct vehicle pose
+    object_pose = [
+        loc[0] + center[0],  # x
+        loc[1] + center[1],  # y
+        loc[2] + center[2],  # z
+        angles[0],           # roll
+        angles[1],           # pitch
+        angles[2]            # yaw
+    ]
+    
+    # Get transformation matrix from object to ego
+    object2ego = x1_to_x2(object_pose, ego_pose)
+
+    # Create corners in object's local coordinate
+    extent = vehicle['extent']  # [l/2, w/2, h/2]
+    l, w, h = extent[0]*2, extent[1]*2, extent[2]*2
+    corners_local = np.array([
+        [ l/2, -w/2, -h/2, 1],  # front left bottom
+        [ l/2,  w/2, -h/2, 1],  # front right bottom
+        [-l/2,  w/2, -h/2, 1],  # rear right bottom
+        [-l/2, -w/2, -h/2, 1],  # rear left bottom
+        [ l/2, -w/2,  h/2, 1],  # front left top
+        [ l/2,  w/2,  h/2, 1],  # front right top
+        [-l/2,  w/2,  h/2, 1],  # rear right top
+        [-l/2, -w/2,  h/2, 1]   # rear left top
+    ])
+
+    # Transform corners to ego coordinate
+    ego_corners = (object2ego @ corners_local.T).T[:, :3]
+    return ego_corners
+
+def world_to_feature_coords(x, y, lidar_range, grid_size_x, grid_size_y):
+    """Convert world coordinates to feature map coordinates"""
+    x_range = lidar_range[3] - lidar_range[0]
+    y_range = lidar_range[4] - lidar_range[1]
+
+    # Normalize to [0, 1] then scale to grid size
+    x_feature = int((x - lidar_range[0]) / x_range * grid_size_x)
+    y_feature = int((y - lidar_range[1]) / y_range * grid_size_y)
+
+    return x_feature, y_feature
+
+def fill_box_in_blindmap(blind_map, points, lidar_range, grid_size_x, grid_size_y):
+    """Fill polygon area in blind map using world_8_points"""
+    feature_points = []
+    # Only need x,y coordinates for BEV
+    for point in points[:4]:  # Only need bottom 4 points for BEV
+        x_feature, y_feature = world_to_feature_coords(point[0], point[1], lidar_range, grid_size_x, grid_size_y)
+        feature_points.append([x_feature, y_feature])
+
+    feature_points = np.array(feature_points)
+
+    # Use cv2.fillPoly to fill the area
+    cv2.fillPoly(blind_map, [feature_points.astype(np.int32)], 1)
+    return blind_map
+
+def generate_blind_map(base_data_dict, ego_id, voxel_size=[0.4, 0.4, 4], lidar_range=[-102.4, -102.4, -3, 102.4, 102.4, 1]):
+    """Generate blind map for ego vehicle"""
+    # Calculate grid size
+    grid_size = (
+        np.array(lidar_range[3:6]) - np.array(lidar_range[0:3])
+    ) / np.array(voxel_size)
+    grid_size = np.round(grid_size).astype(np.int64)
+    grid_size_y, grid_size_x = grid_size[1], grid_size[0]
+    
+    # Initialize blind map
+    ego_blind_map = np.zeros((grid_size_y, grid_size_x), dtype=np.float32)
+    
+    # Get ego pose
+    ego_pose = base_data_dict[ego_id]['params']['lidar_pose']
+    
+    # Collect all other vehicles
+    all_others_vehicles = {}
+    for cav_id, cav_data in base_data_dict.items():
+        if cav_id != ego_id:
+            vehicles = cav_data["params"]["vehicles"]
+            all_others_vehicles.update(vehicles)
+    
+    # Process ego's blind map using occlusion states
+    if 'params_occluded_state' in base_data_dict[ego_id]:
+        ego_vehicles_occluded_states = base_data_dict[ego_id]['params_occluded_state']['vehicles']
+        
+        for vehicle_id, vehicle in ego_vehicles_occluded_states.items():
+            # Fill occluded vehicles in blindmap
+            if ego_vehicles_occluded_states[vehicle_id]["occluded_state"] > 0:
+                vehicle_corners_in_ego = get_vehiclecornors_in_ego_lidar(vehicle, ego_pose)
+                ego_blind_map = fill_box_in_blindmap(ego_blind_map, vehicle_corners_in_ego, 
+                                                     lidar_range, grid_size_x, grid_size_y)
+        
+        # Add other vehicles not in ego's field of view
+        for other_vehicle_id, other_vehicle in all_others_vehicles.items():
+            if other_vehicle_id not in ego_vehicles_occluded_states:
+                other_vehicle_corners_in_ego = get_vehiclecornors_in_ego_lidar(other_vehicle, ego_pose)
+                ego_blind_map = fill_box_in_blindmap(ego_blind_map, other_vehicle_corners_in_ego,
+                                                     lidar_range, grid_size_x, grid_size_y)
+    else:
+        print("No occluded state data available for ego vehicle.")
+        for other_vehicle_id, other_vehicle in all_others_vehicles.items():
+            other_vehicle_corners_in_ego = get_vehiclecornors_in_ego_lidar(other_vehicle, ego_pose)
+            ego_blind_map = fill_box_in_blindmap(ego_blind_map, other_vehicle_corners_in_ego,
+                                                 lidar_range, grid_size_x, grid_size_y)
+    
+    return ego_blind_map
+
 def main():
     ## basic setting
-    path = '/home/node/code/zzh/HEAL/dataset/V2XSET/train/2021_08_23_13_10_47'
+    path = '/home/zzh/projects/HEAL/dataset/V2XSET/train/2021_08_23_13_10_47'
     agent = '127694954'
     time = '000070'
     dataset = ZZHSimpleDataset()
@@ -270,50 +382,81 @@ def main():
 
             lidar_np_ego_agg = cav_content['lidar_np']
 
+            # Generate BlindMap for the current ego vehicle
+            print(f"Generating BlindMap for agent {cav_id}...")
+            voxel_size = [0.4, 0.4, 4]
+            lidar_range = [-102.4, -102.4, -3, 102.4, 102.4, 1]  # Match OPV2V dataset range
+            ego_blind_map = generate_blind_map(base_data_dict, cav_id, voxel_size, lidar_range)
+            print(f"BlindMap shape: {ego_blind_map.shape}, Non-zero pixels: {np.count_nonzero(ego_blind_map)}")
 
-            ## setting canvas and extransic
-            # drawing include 2 things, point cloud and bbox
-            # since it's collaboration view, bbox are shared across each cav
-            canvas_shape=(800, 1200)
-            camera_center_coords=(-10, 0, 10)
-            camera_focus_coords=(-10 + 0.5396926, 0, 10 - 0.34202014)
-
+            ## Create figure with 2 subplots: BEV point cloud + bbox (top), and blindmap (bottom)
+            fig = plt.figure(figsize=(10, 16))
+            
+            ## Top subplot: BEV point cloud and bboxes
+            ax1 = plt.subplot(2, 1, 1)
+            
+            ## setting canvas and pc_range for BEV
+            pc_range = lidar_range  # [-140, -60, -3, 140, 60, 2]
+            
             if v2x:
                 left_hand = False
             else:
                 left_hand = True
 
-            canvas = canvas_3d.Canvas_3D(canvas_shape, camera_center_coords, camera_focus_coords, left_hand=left_hand) 
-            # canvas_xy, valid_mask = canvas.get_canvas_coords(lidar_np_world_agg)
-            # canvas.draw_canvas_points(canvas_xy[valid_mask], colors=COLOR_PC[cav_invert_dict[cav_id]])
-            
+            # Use BEV canvas like simple_vis.py
+            canvas = canvas_bev.Canvas_BEV_heading_right(
+                canvas_shape=(int((pc_range[4]-pc_range[1])*10), int((pc_range[3]-pc_range[0])*10)),
+                canvas_x_range=(pc_range[0], pc_range[3]), 
+                canvas_y_range=(pc_range[1], pc_range[4]),
+                left_hand=left_hand
+            )
 
             canvas_xy, valid_mask = canvas.get_canvas_coords(lidar_np_ego_agg)
-            canvas.draw_canvas_points(canvas_xy[valid_mask], colors=COLOR_PC[cav_invert_dict[cav_id]])
+            canvas.draw_canvas_points(canvas_xy[valid_mask])
+            
             # draw bbox for each cav
             if cav_id == 3:
                 object_np = np.concatenate((object_np, box_corners), axis=0)
             canvas.draw_boxes(object_np, colors=COLOR_RGB[cav_invert_dict[cav_id]])
 
-            plt.axis("off")
-            plt.imshow(canvas.canvas)
+            ax1.axis("off")
+            ax1.imshow(canvas.canvas)
+            ax1.set_title(f"BEV Point Cloud & BBoxes - Agent {cav_id}", color='black', fontsize=14, pad=10)
+            
+            ## Bottom subplot: BlindMap visualization
+            ax2 = plt.subplot(2, 1, 2)
+            # Transpose and flip BlindMap to match BEV canvas orientation
+            # BEV canvas: X goes right (columns), Y goes up (rows)
+            # BlindMap: needs to match this orientation
+            ego_blind_map_display = np.flipud(ego_blind_map.T)  # Transpose and flip vertically
+            
+            # Display BlindMap with a color map (occluded regions will be bright)
+            im = ax2.imshow(ego_blind_map_display, cmap='hot', origin='lower', 
+                           extent=[lidar_range[1], lidar_range[4], lidar_range[0], lidar_range[3]],
+                           aspect='equal')
+            ax2.set_xlabel('Y (m)', fontsize=12)
+            ax2.set_ylabel('X (m)', fontsize=12)
+            ax2.set_title(f"BlindMap (Occlusion Status) - Agent {cav_id}", fontsize=14, pad=10)
+            ax2.grid(True, alpha=0.3)
+            # Add colorbar
+            cbar = plt.colorbar(im, ax=ax2, fraction=0.046, pad=0.04)
+            cbar.set_label('Occlusion Intensity', fontsize=11)
 
             plt.tight_layout()
-
-
+            path1 = os.path.join('blindmap_visualization', os.path.basename(path))
             if v2x:
                 # save_path = f"./result_v2x/single_view_{classes[cav_invert_dict[cav_id]]}"
-                save_path = os.path.join(path, cav_id, time, 'single_view')
+                save_path = os.path.join(path1, f'{cav_id}_{time}single_view_with_blindmap')
             else:
                 # save_path = f"./result/single_view_{classes[cav_invert_dict[cav_id]]}"
-                save_path = os.path.join(path, cav_id, time+'single_view')
+                save_path = os.path.join(path1, f'{cav_id}_{time}single_view_with_blindmap')
 
             if not os.path.exists(save_path):
-                os.mkdir(save_path)
+                os.makedirs(save_path, exist_ok=True)
 
-            plt.savefig(f"{save_path}{idx:02d}.png", transparent=False, dpi=300)
-            print(f"save {save_path}{idx:02d}.png")
-            plt.clf()
+            plt.savefig(f"{save_path}/{idx:02d}.png", transparent=False, dpi=300, bbox_inches='tight')
+            print(f"Saved: {save_path}/{idx:02d}.png")
+            plt.close(fig)
         break
 
 if __name__ == "__main__":

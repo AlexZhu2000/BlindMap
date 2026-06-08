@@ -961,7 +961,15 @@ def getBlindmapintermediatev2xsetFusionDataset(cls):
             gt_box_tensor = self.post_processor.generate_gt_bbx(data_dict)
 
             return pred_box_tensor, pred_score, gt_box_tensor
-        
+        def post_process_no_fusion(self, data_dict, output_dict_ego):
+            data_dict_ego = OrderedDict()
+            data_dict_ego["ego"] = data_dict["ego"]
+            gt_box_tensor = self.post_processor.generate_gt_bbx(data_dict)
+
+            pred_box_tensor, pred_score = self.post_processor.post_process(
+                data_dict_ego, output_dict_ego
+            )
+            return pred_box_tensor, pred_score, gt_box_tensor
         def visualize_batch_blindmaps(self, blind_maps_ego, blind_maps_others, record_len):
             """
             Visualize blind maps for each agent in each batch

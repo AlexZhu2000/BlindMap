@@ -170,3 +170,6 @@ latency_result.txt
 pose_error_result.txt
 vis/blindmap/
 result/
+resubmit/
+blindmap_visualization/
+docs/

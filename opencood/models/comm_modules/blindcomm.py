@@ -27,6 +27,7 @@ def calc_comm_mask(comm_maps, comm_volume_MB, H, W, bev_channels_list):
         full_B = H * W * bev_channels_list[0] * 4
     else:
         full_B = H * W * bev_channels_list[0] * 4 + 0.5* H * 0.5* W * bev_channels_list[1] * 4 + 0.25* H * 0.25* W * bev_channels_list[2] * 4
+    # full_B = H * W * bev_channels_list[0] * 4
     comm_rate = min(1.0, comm_volume_MB * 1024 * 1024 / full_B)
     k = max(1, int(comm_rate * H * W))
     comm_mask = torch.zeros_like(comm_maps)
@@ -37,6 +38,36 @@ def calc_comm_mask(comm_maps, comm_volume_MB, H, W, bev_channels_list):
             flat_mask = torch.zeros_like(flat_map)
             flat_mask[indices] = 1
             comm_mask[i] = flat_mask.view(comm_maps[i].shape)
+
+    return comm_mask, comm_rate
+
+
+def calc_comm_mask_total_budget(comm_maps, comm_volume_MB, H, W, bev_channels_list):
+    # Scene-level budget: comm_volume_MB is shared by all non-ego agents.
+    if len(bev_channels_list) != 3:
+        per_agent_full_B = H * W * bev_channels_list[0] * 4
+    else:
+        per_agent_full_B = (
+            H * W * bev_channels_list[0] * 4
+            + 0.5 * H * 0.5 * W * bev_channels_list[1] * 4
+            + 0.25 * H * 0.25 * W * bev_channels_list[2] * 4
+        )
+
+    num_collab_agents = max(comm_maps.shape[0] - 1, 0)
+    if num_collab_agents == 0:
+        return torch.zeros_like(comm_maps), 0.0
+
+    total_full_B = per_agent_full_B * num_collab_agents
+    comm_rate = min(1.0, comm_volume_MB * 1024 * 1024 / total_full_B)
+    k = max(1, int(comm_rate * H * W))
+
+    comm_mask = torch.zeros_like(comm_maps)
+    for i in range(1, comm_maps.shape[0]):
+        flat_map = comm_maps[i].view(-1)
+        _, indices = torch.topk(flat_map, k=min(k, flat_map.numel()))
+        flat_mask = torch.zeros_like(flat_map)
+        flat_mask[indices] = 1
+        comm_mask[i] = flat_mask.view(comm_maps[i].shape)
 
     return comm_mask, comm_rate
 
@@ -106,7 +137,7 @@ class BlindCommunication(nn.Module):
         # pairwise_t_matrix: (B,L,L,2,3)
         # thre: threshold of objectiveness
         # a_ji = (1 - q_i)*q_ji
-
+        # print("comm_volume_MB when inferencing :{}".format(self.comm_volume_MB))
         B, L, _, _, _ = pairwise_t_matrix.shape
         _, _, H, W = batch_blind_maps_groups[0].shape
 
@@ -194,8 +225,8 @@ class BlindCommunication(nn.Module):
             ones_mask = torch.ones_like(communication_mask).to(
                 communication_mask.device
             )
-            # 只将第一个agent(ego)的mask设置为1
-            communication_mask_nodiag[::2] = ones_mask[::2]
+            # Only the first agent is ego; all collaborators follow the communication mask.
+            communication_mask_nodiag[0] = ones_mask[0]
 
             ######################可视化mask以检查######################
             # import matplotlib.pyplot as plt

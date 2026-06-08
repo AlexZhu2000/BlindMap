@@ -174,7 +174,7 @@ def visualize(infer_result, pcd, pc_range, save_path, method='3d', left_hand=Fal
         plt.close()
 
 
-def visualize_blindmap(infer_result, pcd, pc_range, save_path, method='3d', left_hand=False):
+def visualize_blindmap(infer_result, pcd, pc_range, save_path, method='3d', left_hand=False, comm_volume_MB=None):
         """
         Visualize the prediction, ground truth with point cloud together.
         They may be flipped in y axis. Since carla is left hand coordinate, while kitti is right hand.
@@ -263,17 +263,44 @@ def visualize_blindmap(infer_result, pcd, pc_range, save_path, method='3d', left
             agent_modality_list = infer_result.get("agent_modality_list", None)
             cav_box_np = infer_result.get("cav_box_np", None)
             batch_blind_maps = infer_result.get("batch_blind_maps", None)
+
+            # 如果提供了 comm_volume_MB，计算对应的 communication mask
+            comm_masks = None
+            if comm_volume_MB is not None and batch_blind_maps is not None:
+                # 导入或复制 calc_comm_mask 函数
+                from opencood.models.comm_modules.blindcomm import calc_comm_mask
+                
+                # 获取参数
+                num_agents = len(batch_blind_maps)
+                H, W = batch_blind_maps[0].shape[-2:]  # 获取 Blindmap 尺寸
+                
+                # 需要从模型配置中获取 bev_channels_list
+                # 可以硬编码或从 infer_result 传递
+                bev_channels_list = [64, 128, 256]  # 根据实际配置调整
+                
+                # 将 batch_blind_maps 转换为 tensor 格式
+                import torch
+                comm_maps = torch.stack([bm.unsqueeze(0) if len(bm.shape)==2 
+                                        else bm for bm in batch_blind_maps], dim=0)
+                
+                # 调用 calc_comm_mask 计算 mask
+                comm_masks, comm_rate = calc_comm_mask(comm_maps, comm_volume_MB, 
+                                                    H, W, bev_channels_list)
+                
+
             if batch_blind_maps is not None:
                 num_agents = len(batch_blind_maps)
-                # 创建网格布局 (2 x N)
-                # 第一行显示目标检测结果
-                # 第二行显示各个代理的 Blindmap
-                fig, axs = plt.subplots(2, num_agents-1, 
+                # 创建网格布局: 如果有mask则3行，否则2行
+                # 第一行: 目标检测结果
+                # 第二行: Blindmap
+                # 第三行: Communication Mask (如果有)
+                num_rows = 3 if comm_masks is not None else 2
+                fig, axs = plt.subplots(num_rows, num_agents-1, 
                                     figsize=[(pc_range[3]-pc_range[0])/40 * (num_agents-1), 
-                                            (pc_range[4]-pc_range[1])/20])
+                                            (pc_range[4]-pc_range[1])/40 * num_rows])
                 # Ensure axes is 2D even when num_agents=2 (only one column)
                 if num_agents == 2:
-                    axs = np.array(axs).reshape(2, 1)
+                    axs = np.array(axs).reshape(num_rows, 1)
                 # 第一行第一个子图显示目标检测结果
                 canvas = canvas_bev.Canvas_BEV_heading_right(
                     canvas_shape=((pc_range[4]-pc_range[1])*10, (pc_range[3]-pc_range[0])*10),
@@ -312,26 +339,26 @@ def visualize_blindmap(infer_result, pcd, pc_range, save_path, method='3d', left
                 
                 # 第二行显示每个代理的 Blindmap
                 for i in range(1, num_agents):
-                    canvas = canvas_bev.Canvas_BEV_heading_right(
-                        canvas_shape=((pc_range[4]-pc_range[1])*10, (pc_range[3]-pc_range[0])*10),
-                        canvas_x_range=(pc_range[0], pc_range[3]), 
-                        canvas_y_range=(pc_range[1], pc_range[4]),
-                        left_hand=left_hand
-                    )
-                    
-                    # 绘制点云和 Blindmap
-                    canvas_xy, valid_mask = canvas.get_canvas_coords(pcd_np)
-                    canvas.draw_canvas_points(canvas_xy[valid_mask])
-                    
                     blind_map = batch_blind_maps[i].cpu().numpy()
-                    # print(blind_map.shape)
                     if len(blind_map.shape) == 3:
                         blind_map = blind_map[0]
-                    axs[1,i-1].imshow(blind_map, cmap='hot', 
-                                      interpolation='none')
-                    axs[1,i-1].set_title(f'Agent {i} Blindmap')
-                    axs[1,i-1].set_aspect('equal')
-                    axs[1,i-1].axis('off')
+                    
+                    axs[1, i-1].imshow(blind_map, cmap='hot', interpolation='none')
+                    axs[1, i-1].set_title(f'Agent {i} Blindmap')
+                    axs[1, i-1].set_aspect('equal')
+                    axs[1, i-1].axis('off')
+                
+                # 第三行显示 Communication Mask (如果有)
+                if comm_masks is not None:
+                    for i in range(1, num_agents):
+                        mask = comm_masks[i].cpu().numpy()
+                        if len(mask.shape) == 3:
+                            mask = mask[0]
+                        
+                        axs[2, i-1].imshow(mask, cmap='gray', interpolation='none', vmin=0, vmax=1)
+                        axs[2, i-1].set_title(f'Agent {i} Comm Mask\n{comm_volume_MB:.2f}MB')
+                        axs[2, i-1].set_aspect('equal')
+                        axs[2, i-1].axis('off')
                 
                 plt.tight_layout()
                 # plt.show()

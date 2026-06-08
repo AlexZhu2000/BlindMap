@@ -9,7 +9,7 @@ import torch.nn as nn
 import numpy as np
 from icecream import ic
 from collections import OrderedDict, Counter
-from opencood.models.sub_modules.base_bev_backbone_resnet import ResNetBEVBackbone 
+from opencood.models.sub_modules.base_bev_backbone_resnet import ResNetBEVBackbone
 from opencood.models.sub_modules.feature_alignnet import AlignNet
 from opencood.models.sub_modules.downsample_conv import DownsampleConv
 from opencood.models.sub_modules.naive_compress import NaiveCompressor
@@ -25,13 +25,13 @@ class BlindmapPyramidCollabV2xset(nn.Module):
         super(BlindmapPyramidCollabV2xset, self).__init__()
         self.args = args
         modality_name_list = list(args.keys())
-        modality_name_list = [x for x in modality_name_list if x.startswith("m") and x[1:].isdigit()] 
+        modality_name_list = [x for x in modality_name_list if x.startswith("m") and x[1:].isdigit()]
         self.modality_name_list = modality_name_list
 
         self.cav_range = args['lidar_range']
         self.sensor_type_dict = OrderedDict()
         # self.meter_per_pixel = args['m1']['encoder_args']['voxel_size'][0]
-        self.cam_crop_info = {} 
+        self.cam_crop_info = {}
 
         # setup each modality model
         for modality_name in self.modality_name_list:
@@ -59,7 +59,7 @@ class BlindmapPyramidCollabV2xset(nn.Module):
                 setattr(self, f"depth_supervision_{modality_name}", False)
 
             """
-            Backbone building 
+            Backbone building
             """
             setattr(self, f"backbone_{modality_name}", ResNetBEVBackbone(model_setting['backbone_args']))
 
@@ -85,7 +85,7 @@ class BlindmapPyramidCollabV2xset(nn.Module):
 
         """
 
-        Fusion, by default multiscale fusion: 
+        Fusion, by default multiscale fusion:
         Note the input of PyramidFusion has downsampled 2x. (SECOND required)
         """
         # self.pyramid_backbone = PyramidFusion(args['fusion_backbone'])
@@ -108,7 +108,7 @@ class BlindmapPyramidCollabV2xset(nn.Module):
                                   kernel_size=1)
         self.dir_head = nn.Conv2d(args['in_head'], args['dir_args']['num_bins'] * args['anchor_number'],
                                   kernel_size=1) # BIN_NUM = 2
-        
+
         # compressor will be only trainable
         self.compress = False
         if 'compressor' in args:
@@ -132,12 +132,15 @@ class BlindmapPyramidCollabV2xset(nn.Module):
             self.compressor.train()
             for p in self.compressor.parameters():
                 p.requires_grad_(True)
-
     def forward(self, data_dict):
+        if getattr(self, "force_collab", False):
+            return self.forward_colla(data_dict)
+        return self.forward_single(data_dict)
+    def forward_colla(self, data_dict):
         output_dict = {'pyramid': 'collab'}
-        agent_modality_list = data_dict['agent_modality_list'] 
+        agent_modality_list = data_dict['agent_modality_list']
         affine_matrix = normalize_pairwise_tfm(data_dict['pairwise_t_matrix'], self.H, self.W, self.fake_voxel_size)
-        record_len = data_dict['record_len'] 
+        record_len = data_dict['record_len']
         # print(agent_modality_list)
         modality_count_dict = Counter(agent_modality_list)
         modality_feature_dict = {}
@@ -145,19 +148,46 @@ class BlindmapPyramidCollabV2xset(nn.Module):
         # torch.cuda.synchronize() if torch.cuda.is_available() else None
         # import time
         # t0 = time.time()
+        start = torch.cuda.Event(enable_timing=True) 
+        end = torch.cuda.Event(enable_timing=True)
+
         for modality_name in self.modality_name_list:
             if modality_name not in modality_count_dict:
                 continue
+
+            # start.record()
             feature = eval(f"self.encoder_{modality_name}")(data_dict, modality_name)
+            # end.record()
+            # torch.cuda.synchronize()
+            # print(f"encoder_{modality_name} time: {start.elapsed_time(end)}")
             # print(f"encoder_{modality_name} output shape: {feature.shape}")
             # encoder_m1 output shape: torch.Size([sum(CAV), 64, 256, 512])
+            # start.record()
             feature = eval(f"self.backbone_{modality_name}")({"spatial_features": feature})['spatial_features_2d']
+            # end.record()
+            # torch.cuda.synchronize()
+            # print(f"backbone_{modality_name} time: {start.elapsed_time(end)}")
             # print(f"encoder_{modality_name} output shape: {feature.shape}")
             # encoder_m1 output shape: torch.Size([sum(CAV, 64, 128, 256])
+
+            # start.record()
             feature = eval(f"self.aligner_{modality_name}")(feature)
             modality_feature_dict[modality_name] = feature
+
+            # end.record()
+            # torch.cuda.synchronize()
+            # print(f"aligner_{modality_name} time: {start.elapsed_time(end)}")
             # print('modality_feature_dict.keys: ', modality_feature_dict.keys())
             # modality_feature_dict.keys:  dict_keys(['m1'])
+        # ====== 记录输入到heter_feature_2d的时间 ======
+        # torch.cuda.synchronize() if torch.cuda.is_available() else None
+        # t1 = time.time()
+        # print('time from encoder to heter_feature_2d: ', t1-t0)
+        end.record()
+        torch.cuda.synchronize()
+        # print('time from encoder to heter_feature_2d: ', start.elapsed_time(end))
+        if self.compress:
+            heter_feature_2d = self.compressor(heter_feature_2d)
         """
         Crop/Padd camera feature map.
         """
@@ -188,12 +218,7 @@ class BlindmapPyramidCollabV2xset(nn.Module):
             counting_dict[modality_name] += 1
 
         heter_feature_2d = torch.stack(heter_feature_2d_list)
-        # ====== 记录输入到heter_feature_2d的时间 ======
-        # torch.cuda.synchronize() if torch.cuda.is_available() else None
-        # t1 = time.time()
-        # print('time from encoder to heter_feature_2d: ', t1-t0)
-        if self.compress:
-            heter_feature_2d = self.compressor(heter_feature_2d)
+
         # print(f"heter_feature_2d shape: {heter_feature_2d.shape}")
         # heter_feature_2d shape: torch.Size([4, 64, 128, 256])
         # heter_feature_2d is downsampled 2x
@@ -202,20 +227,23 @@ class BlindmapPyramidCollabV2xset(nn.Module):
         # print(f"history_blind_maps shape : {history_blind_maps.shape if history_blind_maps is not None else 'None'}")
         fused_feature, communication_rates, batch_blind_maps, occ_outputs = self.pyramid_backbone.forward_collab(
                                                 heter_feature_2d,
-                                                record_len, 
-                                                affine_matrix, 
-                                                agent_modality_list, 
+                                                record_len,
+                                                affine_matrix,
+                                                agent_modality_list,
                                                 self.cam_crop_info,
                                                 history_blind_maps=history_blind_maps
                                             )
-        # ============= 可视化部分 =============
+
+        if self.shrink_flag:
+            fused_feature = self.shrink_conv(fused_feature)
+        # # ============= 可视化部分 =============
         # visualize = True
         # vis_channels = [0, 4, 12, 21, 32, 45, 57, 60]
         # if visualize and not self.training:
         #     visualizer = CollaborativeFeatureVisualizer(
         #         save_dir=os.path.join(runtime_config.saved_path, './visualization_results')
         #     )
-        
+
         # # 对每个batch样本进行可视化
         # for batch_idx in range(len(record_len)):
         #     visualizer.visualize_channel_features(
@@ -226,18 +254,17 @@ class BlindmapPyramidCollabV2xset(nn.Module):
         #         channel_indices=vis_channels,
         #         sample_idx=batch_idx
         #     )
-            
+
         #     # 计算并打印特征相似度
         #     start_idx = sum(record_len[:batch_idx])
         #     end_idx = start_idx + record_len[batch_idx]
         #     sample_heter = heter_feature_2d[start_idx:end_idx]
         #     sample_fused = fused_feature[batch_idx]
-            
-            # similarity_metrics = visualizer.compute_feature_similarity(
-            #     sample_heter, sample_fused
-            # )
-        if self.shrink_flag:
-            fused_feature = self.shrink_conv(fused_feature)
+
+        #     similarity_metrics = visualizer.compute_feature_similarity(
+        #         sample_heter, sample_fused
+        #     )
+
         # torch.cuda.synchronize() if torch.cuda.is_available() else None
         # detection_start_time = time.time()
         cls_preds = self.cls_head(fused_feature)
@@ -249,17 +276,92 @@ class BlindmapPyramidCollabV2xset(nn.Module):
         output_dict.update({'cls_preds': cls_preds,
                             'reg_preds': reg_preds,
                             'dir_preds': dir_preds})
-        
-        output_dict.update({'occ_single_list': 
+
+        output_dict.update({'occ_single_list':
                             occ_outputs})
-        output_dict.update({'comm_rate': 
+        output_dict.update({'comm_rate':
                             communication_rates})
-        
-        output_dict.update({'pred_blind_maps': 
+
+        output_dict.update({'pred_blind_maps':
                             batch_blind_maps})
 
         return output_dict
+    def forward_single(self, data_dict):
+        output_dict = {'pyramid': 'single'}
+        agent_modality_list = data_dict['agent_modality_list']
+        affine_matrix = normalize_pairwise_tfm(data_dict['pairwise_t_matrix'], self.H, self.W, self.fake_voxel_size)
+        record_len = data_dict['record_len']
+        # print(agent_modality_list)
+        modality_count_dict = Counter(agent_modality_list)
+        modality_feature_dict = {}
 
+        start = torch.cuda.Event(enable_timing=True) 
+        end = torch.cuda.Event(enable_timing=True)
+
+        for modality_name in self.modality_name_list:
+            if modality_name not in modality_count_dict:
+                continue
+
+            # start.record()
+            feature = eval(f"self.encoder_{modality_name}")(data_dict, modality_name)
+
+            feature = eval(f"self.backbone_{modality_name}")({"spatial_features": feature})['spatial_features_2d']
+
+            feature = eval(f"self.aligner_{modality_name}")(feature)
+            modality_feature_dict[modality_name] = feature
+
+        end.record()
+        torch.cuda.synchronize()
+        # print('time from encoder to heter_feature_2d: ', start.elapsed_time(end))
+        if self.compress:
+            heter_feature_2d = self.compressor(heter_feature_2d)
+        """
+        Crop/Padd camera feature map.
+        """
+        for modality_name in self.modality_name_list:
+            if modality_name in modality_count_dict:
+                if self.sensor_type_dict[modality_name] == "camera":
+                    # should be padding. Instead of masking
+                    feature = modality_feature_dict[modality_name]
+                    _, _, H, W = feature.shape
+                    target_H = int(H*eval(f"self.crop_ratio_H_{modality_name}"))
+                    target_W = int(W*eval(f"self.crop_ratio_W_{modality_name}"))
+
+                    crop_func = torchvision.transforms.CenterCrop((target_H, target_W))
+                    modality_feature_dict[modality_name] = crop_func(feature)
+                    if eval(f"self.depth_supervision_{modality_name}"):
+                        output_dict.update({
+                            f"depth_items_{modality_name}": eval(f"self.encoder_{modality_name}").depth_items
+                        })
+
+        """
+        Assemble heter features (ego-only for single agent forward)
+        """
+        # For ego-only forward, only assemble the first agent (ego)
+        ego_modality = agent_modality_list[0]
+        heter_feature_2d_list = [modality_feature_dict[ego_modality][0]]
+        heter_feature_2d = torch.stack(heter_feature_2d_list)
+
+        fused_feature, occ_outputs = self.pyramid_backbone.forward_single(
+                                                heter_feature_2d
+                                            )
+
+        if self.shrink_flag:
+            fused_feature = self.shrink_conv(fused_feature)
+
+
+        cls_preds = self.cls_head(fused_feature)
+        reg_preds = self.reg_head(fused_feature)
+        dir_preds = self.dir_head(fused_feature)
+
+        output_dict.update({'cls_preds': cls_preds,
+                            'reg_preds': reg_preds,
+                            'dir_preds': dir_preds})
+
+        output_dict.update({'occ_single_list':
+                            occ_outputs})
+
+        return output_dict
 
 import torch
 import matplotlib.pyplot as plt
@@ -274,13 +376,13 @@ class CollaborativeFeatureVisualizer:
     def __init__(self, save_dir='./feature_visualization'):
         self.save_dir = save_dir
         os.makedirs(save_dir, exist_ok=True)
-        
-    def visualize_channel_features(self, heter_feature_2d, fused_feature, 
-                                   agent_modality_list, record_len, 
+
+    def visualize_channel_features(self, heter_feature_2d, fused_feature,
+                                   agent_modality_list, record_len,
                                    channel_indices=None, sample_idx=0):
         """
         可视化ego和协同车辆的特征通道，以及融合后的特征
-        
+
         Args:
             heter_feature_2d: [N, C, H, W] 融合前的异构特征
             fused_feature: [B, C, H, W] 融合后的特征
@@ -291,51 +393,51 @@ class CollaborativeFeatureVisualizer:
         """
         if channel_indices is None:
             channel_indices = list(range(min(8, heter_feature_2d.shape[1])))
-        
+
         # 计算当前sample的agent起始索引
         start_idx = sum(record_len[:sample_idx])
         end_idx = start_idx + record_len[sample_idx]
-        
+
         # 提取当前sample的特征
         sample_heter_features = heter_feature_2d[start_idx:end_idx]  # [num_agents, C, H, W]
         sample_fused_feature = fused_feature[sample_idx]  # [C, H, W]
         sample_modalities = agent_modality_list[start_idx:end_idx]
-        
+
         num_agents = len(sample_heter_features)
         num_channels = len(channel_indices)
-        
+
         # 为每个通道创建可视化
         for ch_idx in channel_indices:
             self._visualize_single_channel(
-                sample_heter_features, sample_fused_feature, 
+                sample_heter_features, sample_fused_feature,
                 sample_modalities, ch_idx, sample_idx
             )
-        
+
         # 创建综合对比图
         self._visualize_channel_comparison(
             sample_heter_features, sample_fused_feature,
             sample_modalities, channel_indices, sample_idx
         )
-        
-    def _visualize_single_channel(self, heter_features, fused_feature, 
+
+    def _visualize_single_channel(self, heter_features, fused_feature,
                                   modalities, channel_idx, sample_idx):
         """可视化单个通道的所有agent特征和融合特征"""
         num_agents = len(heter_features)
-        
+
         fig = plt.figure(figsize=(20, 4))
         gs = GridSpec(1, num_agents + 2, figure=fig, wspace=0.3)
-        
+
         # 可视化每个agent的特征
         for i in range(num_agents):
             ax = fig.add_subplot(gs[0, i])
             feature_map = heter_features[i, channel_idx].cpu().detach().numpy()
-            
+
             im = ax.imshow(feature_map, cmap='viridis', aspect='auto')
             agent_type = 'Ego' if i == 0 else f'Agent{i}'
             ax.set_title(f'{agent_type}\n({modalities[i]})', fontsize=10)
             ax.axis('off')
             plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        
+
         # 可视化融合后的特征
         ax_fused = fig.add_subplot(gs[0, num_agents])
         fused_map = fused_feature[channel_idx].cpu().detach().numpy()
@@ -343,7 +445,7 @@ class CollaborativeFeatureVisualizer:
         ax_fused.set_title('Fused Feature', fontsize=10, fontweight='bold')
         ax_fused.axis('off')
         plt.colorbar(im, ax=ax_fused, fraction=0.046, pad=0.04)
-        
+
         # 添加差异热图（ego vs fused）
         ax_diff = fig.add_subplot(gs[0, num_agents + 1])
         ego_map = heter_features[0, channel_idx].cpu().detach().numpy()
@@ -352,31 +454,31 @@ class CollaborativeFeatureVisualizer:
         ax_diff.set_title('|Ego - Fused|', fontsize=10, fontweight='bold')
         ax_diff.axis('off')
         plt.colorbar(im, ax=ax_diff, fraction=0.046, pad=0.04)
-        
-        plt.suptitle(f'Channel {channel_idx} Feature Comparison (Sample {sample_idx})', 
+
+        plt.suptitle(f'Channel {channel_idx} Feature Comparison (Sample {sample_idx})',
                      fontsize=14, fontweight='bold', y=1.02)
-        
+
         save_path = os.path.join(self.save_dir, f'sample{sample_idx}_channel{channel_idx}.png')
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
         plt.close()
         print(f'Saved: {save_path}')
-        
+
     def _visualize_channel_comparison(self, heter_features, fused_feature,
                                      modalities, channel_indices, sample_idx):
         """创建多通道综合对比图"""
         num_agents = len(heter_features)
         num_channels = len(channel_indices)
-        
+
         fig = plt.figure(figsize=(20, 4 * num_channels))
-        gs = GridSpec(num_channels, num_agents + 2, figure=fig, 
+        gs = GridSpec(num_channels, num_agents + 2, figure=fig,
                      hspace=0.3, wspace=0.3)
-        
+
         for row, ch_idx in enumerate(channel_indices):
             # 可视化每个agent
             for col in range(num_agents):
                 ax = fig.add_subplot(gs[row, col])
                 feature_map = heter_features[col, ch_idx].cpu().detach().numpy()
-                
+
                 im = ax.imshow(feature_map, cmap='viridis', aspect='auto')
                 if row == 0:
                     agent_type = 'Ego' if col == 0 else f'Agent{col}'
@@ -384,10 +486,10 @@ class CollaborativeFeatureVisualizer:
                 if col == 0:
                     ax.set_ylabel(f'Ch {ch_idx}', fontsize=10, fontweight='bold')
                 ax.axis('off')
-                
+
                 if col == 0:  # 只为第一列添加colorbar
                     plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            
+
             # 融合特征
             ax_fused = fig.add_subplot(gs[row, num_agents])
             fused_map = fused_feature[ch_idx].cpu().detach().numpy()
@@ -396,7 +498,7 @@ class CollaborativeFeatureVisualizer:
                 ax_fused.set_title('Fused', fontsize=10, fontweight='bold')
             ax_fused.axis('off')
             plt.colorbar(im, ax=ax_fused, fraction=0.046, pad=0.04)
-            
+
             # 差异图
             ax_diff = fig.add_subplot(gs[row, num_agents + 1])
             ego_map = heter_features[0, ch_idx].cpu().detach().numpy()
@@ -406,30 +508,30 @@ class CollaborativeFeatureVisualizer:
                 ax_diff.set_title('|Ego-Fused|', fontsize=10, fontweight='bold')
             ax_diff.axis('off')
             plt.colorbar(im, ax=ax_diff, fraction=0.046, pad=0.04)
-        
-        plt.suptitle(f'Multi-Channel Feature Comparison (Sample {sample_idx})', 
+
+        plt.suptitle(f'Multi-Channel Feature Comparison (Sample {sample_idx})',
                      fontsize=16, fontweight='bold', y=0.995)
-        
-        save_path = os.path.join(self.save_dir, 
+
+        save_path = os.path.join(self.save_dir,
                                 f'sample{sample_idx}_multi_channel_comparison.png')
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
         plt.close()
         print(f'Saved: {save_path}')
-        
+
     def compute_feature_similarity(self, heter_features, fused_feature):
         """
         计算特征相似度指标
-        
+
         Returns:
             dict: 包含各种相似度指标的字典
         """
         num_agents = len(heter_features)
         ego_feature = heter_features[0]  # [C, H, W]
-        
+
         # 计算ego与其他agent的相似度
         cosine_sims = []
         mse_values = []
-        
+
         for i in range(1, num_agents):
             # Cosine similarity
             ego_flat = ego_feature.flatten()
@@ -438,19 +540,19 @@ class CollaborativeFeatureVisualizer:
                 ego_flat.unsqueeze(0), agent_flat.unsqueeze(0)
             ).item()
             cosine_sims.append(cos_sim)
-            
+
             # MSE
             mse = torch.nn.functional.mse_loss(ego_feature, heter_features[i]).item()
             mse_values.append(mse)
-        
+
         # 计算ego与融合特征的相似度
         ego_fused_cos = torch.nn.functional.cosine_similarity(
-            ego_feature.flatten().unsqueeze(0), 
+            ego_feature.flatten().unsqueeze(0),
             fused_feature.flatten().unsqueeze(0)
         ).item()
-        
+
         ego_fused_mse = torch.nn.functional.mse_loss(ego_feature, fused_feature).item()
-        
+
         return {
             'inter_agent_cosine_sim': cosine_sims,
             'inter_agent_mse': mse_values,

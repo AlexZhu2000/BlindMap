@@ -11,7 +11,7 @@ if test $status -ne 0
 end
 
 for i in (seq 1 5)
-    CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES python opencood/tools/inference_zzh.py --model_dir $MODEL_DIR --comm_volume_MB 1 --range $RANGE --time_delay $i
+    CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES python opencood/tools/inference.py --model_dir $MODEL_DIR --comm_volume_MB 1 --range $RANGE --time_delay $i
 
     if test $status -ne 0
         exit $status

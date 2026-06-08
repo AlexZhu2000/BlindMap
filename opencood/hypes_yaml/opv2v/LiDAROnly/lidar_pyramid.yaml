@@ -1,11 +1,12 @@
 name: HeterBaseline_opv2v_lidar_pyramid 
-root_dir: "dataset/OPV2V/train"
-validate_dir: "dataset/OPV2V/validate"
-test_dir: "dataset/OPV2V/test"
-
+root_dir: "/home/zzh/projects/HEAL/dataset/OPV2V/train"
+validate_dir: "/home/zzh/projects/HEAL/dataset/OPV2V/validate"
+test_dir: "/home/zzh/projects/HEAL/dataset/OPV2V/test"
+history_num: &history_num 1
+use_history: False
 yaml_parser: "load_general_params"
 train_params:
-  batch_size: &batch_size 4
+  batch_size: &batch_size 2
   epoches: 30
   eval_freq: 2
   save_freq: 2

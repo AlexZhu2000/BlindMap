@@ -34,7 +34,8 @@ def train_parser():
 def main():
     opt = train_parser()
     hypes = yaml_utils.load_yaml(opt.hypes_yaml, opt)
-
+    if hypes['fusion']['dataset'] == 'dairv2x':
+        hypes['use_history'] = False
     print('Dataset Building')
     opencood_train_dataset = build_dataset(hypes, visualize=False, train=True)
     opencood_validate_dataset = build_dataset(hypes,
@@ -61,18 +62,19 @@ def main():
     print('Creating Model')
     model = train_utils.create_model(hypes)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    
+
     # record lowest validation loss checkpoint.
     lowest_val_loss = 1e5
     lowest_val_epoch = -1
 
     # define the loss
     criterion = train_utils.create_loss(hypes)
-    blindmap_criterion = train_utils.create_blindmap_loss(hypes)
+    if hypes.get('blindmap_loss') is not None:
+        blindmap_criterion = train_utils.create_blindmap_loss(hypes)
     # optimizer setup
     optimizer = train_utils.setup_optimizer(hypes, model)
     # lr scheduler setup
-    
+
     # if we want to train from last checkpoint.
     if opt.model_dir:
         saved_path = opt.model_dir
@@ -91,7 +93,7 @@ def main():
     # we assume gpu is necessary
     if torch.cuda.is_available():
         model.to(device)
-        
+
     # record training
     writer = SummaryWriter(saved_path)
 
@@ -117,7 +119,7 @@ def main():
             batch_data = train_utils.to_device(batch_data, device)
             batch_data['ego']['epoch'] = epoch
             ouput_dict = model(batch_data['ego'])
-            
+
             final_loss = criterion(ouput_dict, batch_data['ego']['label_dict'])
             criterion.logging(epoch, i, len(train_loader), writer)
 
@@ -193,7 +195,7 @@ def main():
     run_test = True
     if run_test:
         fusion_method = opt.fusion_method
-        cmd = f"python opencood/tools/inference.py --model_dir {saved_path} --fusion_method {fusion_method}"
+        cmd = f"python opencood/tools/inference.py --model_dir {saved_path} --fusion_method {fusion_method} --modal 1 --range 102.4,51.2"
         print(f"Running command: {cmd}")
         os.system(cmd)
 
