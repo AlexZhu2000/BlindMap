@@ -51,7 +51,10 @@ class Where2commPyramidFusion(ResNetBEVBackbone):
                 width_per_group=4,
             )
 
-        self.where2comm_communication = Communication(self.model_cfg["communication"])
+        self.where2comm_communication = Communication(
+            self.model_cfg["communication"],
+            self.model_cfg.get("num_filters", None),
+        )
         self.align_corners = model_cfg.get('align_corners', False)
         print('Align corners: ', self.align_corners)
         self.agg_mode = self.model_cfg["communication"].get('fusion_mode', "MAX")

@@ -418,7 +418,7 @@ def main():
         comm_rates = 0
     ap30, ap50, ap70 = eval_utils.eval_final_results(result_stat,
                                 opt.model_dir, infer_info)
-    model_time_av = sum(model_times)/len(model_times)
+    model_time_av = sum(model_times)/len(model_times) if model_times else 0
     with open(os.path.join(saved_path, 'result.txt'), 'a+') as f:
             note = 'modal {} {}'.format(opt.modal, modality_note)
             msg = note + ' | ' + 'Epoch: {} | AP @0.3: {:.04f} | AP @0.5: {:.04f} | AP @0.7: {:.04f} | comm_rate: {:.06f}'.format(resume_epoch, ap30, ap50, ap70, comm_rates)

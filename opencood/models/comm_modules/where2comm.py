@@ -6,12 +6,56 @@ import torch
 import torch.nn as nn
 import numpy as np
 
+
+def calc_comm_mask_total_budget(comm_maps, comm_volume_MB, bev_channels_list):
+    """
+    Select Where2comm confidence regions under a scene-level budget.
+
+    The budget is shared by all non-ego collaborators. Region selection is
+    performed on the highest-resolution map and the caller reuses/resizes the
+    mask for lower pyramid levels.
+    """
+    _, _, H, W = comm_maps.shape
+
+    if not bev_channels_list:
+        per_agent_full_bytes = H * W * 4
+    elif len(bev_channels_list) != 3:
+        per_agent_full_bytes = H * W * bev_channels_list[0] * 4
+    else:
+        per_agent_full_bytes = (
+            H * W * bev_channels_list[0] * 4
+            + 0.5 * H * 0.5 * W * bev_channels_list[1] * 4
+            + 0.25 * H * 0.25 * W * bev_channels_list[2] * 4
+        )
+
+    num_collab_agents = max(comm_maps.shape[0] - 1, 0)
+    if num_collab_agents == 0:
+        return torch.zeros_like(comm_maps), 0.0
+
+    total_full_bytes = per_agent_full_bytes * num_collab_agents
+    comm_rate = min(1.0, comm_volume_MB * 1024 * 1024 / total_full_bytes)
+    k = max(1, int(comm_rate * H * W))
+
+    comm_mask = torch.zeros_like(comm_maps)
+    for i in range(1, comm_maps.shape[0]):
+        flat_map = comm_maps[i].reshape(-1)
+        _, indices = torch.topk(flat_map, k=min(k, flat_map.numel()))
+        flat_mask = torch.zeros_like(flat_map)
+        flat_mask[indices] = 1
+        comm_mask[i] = flat_mask.view_as(comm_maps[i])
+
+    return comm_mask, comm_rate
+
+
 class Communication(nn.Module):
-    def __init__(self, args):
+    def __init__(self, args, channels_list=None):
         super(Communication, self).__init__()
         
         self.smooth = False
         self.thre = args['thre']
+        self.use_threshold = args.get('use_threshold', True)
+        self.comm_volume_MB = args.get('comm_volume_MB', 1)
+        self.bev_channels_list = channels_list
         if 'gaussian_smooth' in args:
             # Gaussian Smooth
             self.smooth = True
@@ -58,9 +102,17 @@ class Communication(nn.Module):
 
             ones_mask = torch.ones_like(communication_maps).to(communication_maps.device)
             zeros_mask = torch.zeros_like(communication_maps).to(communication_maps.device)
-            communication_mask = torch.where(communication_maps>self.thre, ones_mask, zeros_mask)
+            if self.use_threshold:
+                communication_mask = torch.where(communication_maps>self.thre, ones_mask, zeros_mask)
 
-            communication_rate = communication_mask[0].sum()/(H*W)
+                if N > 1:
+                    communication_rate = communication_mask[1:N].sum()/((N - 1) * H * W)
+                else:
+                    communication_rate = torch.zeros(1, device=communication_maps.device)[0]
+            else:
+                communication_mask, communication_rate = calc_comm_mask_total_budget(
+                    communication_maps, self.comm_volume_MB, self.bev_channels_list
+                )
 
             # communication_mask = warp_affine_simple(communication_mask,
             #                                 t_matrix[0, :, :, :],
@@ -68,7 +120,8 @@ class Communication(nn.Module):
             
             communication_mask_nodiag = communication_mask.clone()
             ones_mask = torch.ones_like(communication_mask).to(communication_mask.device)
-            communication_mask_nodiag[::2] = ones_mask[::2]
+            # Only the first CAV is ego in the OpenCOOD intermediate-fusion batch.
+            communication_mask_nodiag[0] = ones_mask[0]
 
             communication_masks.append(communication_mask_nodiag)
             communication_rates.append(communication_rate)
