@@ -172,13 +172,13 @@ def plot_comparison(result_a, result_b, ego_a, ego_b, co_id, out_png):
     mask_b = result_b["co_mask"]
     diff = np.abs(map_a - map_b)
 
-    fig, axes = plt.subplots(2, 3, figsize=(13, 7), dpi=220)
+    fig, axes = plt.subplots(2, 3, figsize=(13, 6.4), dpi=220, constrained_layout=True)
     panels = [
-        (map_a, f"co {co_id} BlindMap | ego {ego_a}", "magma", 0, 1),
-        (map_b, f"co {co_id} BlindMap | ego {ego_b}", "magma", 0, 1),
+        (map_a, f"sender {co_id} BlindMap probability | receiver {ego_a}", "magma", 0, 1),
+        (map_b, f"sender {co_id} BlindMap probability | receiver {ego_b}", "magma", 0, 1),
         (diff, "absolute probability difference", "viridis", 0, None),
-        (mask_a, f"comm mask | ego {ego_a}", "gray", 0, 1),
-        (mask_b, f"comm mask | ego {ego_b}", "gray", 0, 1),
+        (mask_a, f"sender {co_id} selected mask | receiver {ego_a}", "gray", 0, 1),
+        (mask_b, f"sender {co_id} selected mask | receiver {ego_b}", "gray", 0, 1),
         (np.abs(mask_a - mask_b), "absolute mask difference", "inferno", 0, 1),
     ]
 
@@ -187,9 +187,12 @@ def plot_comparison(result_a, result_b, ego_a, ego_b, co_id, out_png):
         ax.set_title(title, fontsize=9)
         ax.set_xticks([])
         ax.set_yticks([])
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.02)
+        fig.colorbar(im, ax=ax, fraction=0.04, pad=0.015, shrink=0.82, aspect=18)
 
-    fig.tight_layout()
+    fig.suptitle(
+        "BlindMap: receiver-conditioned blind-map prediction selects receiver-specific communication regions",
+        fontsize=11,
+    )
     fig.savefig(out_png, bbox_inches="tight")
     plt.close(fig)
 

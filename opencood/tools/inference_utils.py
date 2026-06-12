@@ -15,6 +15,70 @@ from opencood.utils.box_utils import create_bbx, project_box3d, nms_rotated
 from opencood.utils.camera_utils import indices_to_depth
 from sklearn.metrics import mean_squared_error
 
+
+def _slice_intermediate_to_ego(batch_data):
+    """
+    Build an ego-only view for intermediate-fusion batches.
+
+    Intermediate/heterogeneous datasets stack all CAV inputs inside
+    batch_data['ego']; feeding that dict directly to the model would still use
+    collaborator features. This keeps only the first agent while preserving the
+    original batch for merged-GT evaluation.
+    """
+    if 'ego' not in batch_data:
+        return batch_data
+
+    ego_content = batch_data['ego']
+    record_len = ego_content.get('record_len', None)
+    if record_len is None:
+        return batch_data
+
+    if isinstance(record_len, torch.Tensor):
+        if record_len.numel() != 1 or int(record_len[0].item()) <= 1:
+            return batch_data
+        ego_record_len = torch.ones_like(record_len)
+        total_agents = int(record_len[0].item())
+    else:
+        if len(record_len) != 1 or int(record_len[0]) <= 1:
+            return batch_data
+        ego_record_len = [1]
+        total_agents = int(record_len[0])
+
+    ego_only = dict(ego_content)
+    ego_only['record_len'] = ego_record_len
+
+    if 'pairwise_t_matrix' in ego_only:
+        ego_only['pairwise_t_matrix'] = ego_only['pairwise_t_matrix'][:, :1, :1]
+    if 'agent_modality_list' in ego_only:
+        ego_only['agent_modality_list'] = ego_only['agent_modality_list'][:1]
+    if 'lidar_pose' in ego_only:
+        ego_only['lidar_pose'] = ego_only['lidar_pose'][:1]
+    if 'lidar_pose_clean' in ego_only:
+        ego_only['lidar_pose_clean'] = ego_only['lidar_pose_clean'][:1]
+    if 'cav_id_list' in ego_only:
+        ego_only['cav_id_list'] = ego_only['cav_id_list'][:1]
+
+    for input_key, input_value in list(ego_only.items()):
+        if not input_key.startswith('inputs_') or not isinstance(input_value, dict):
+            continue
+
+        input_only = dict(input_value)
+        voxel_coords = input_only.get('voxel_coords', None)
+        if isinstance(voxel_coords, torch.Tensor) and voxel_coords.numel() > 0:
+            ego_mask = voxel_coords[:, 0] == 0
+            input_only['voxel_coords'] = voxel_coords[ego_mask].clone()
+            input_only['voxel_coords'][:, 0] = 0
+            for key in ('voxel_features', 'voxel_num_points'):
+                if key in input_only and isinstance(input_only[key], torch.Tensor):
+                    input_only[key] = input_only[key][ego_mask]
+        else:
+            for key, value in list(input_only.items()):
+                if isinstance(value, torch.Tensor) and value.shape[:1] == (total_agents,):
+                    input_only[key] = value[:1]
+        ego_only[input_key] = input_only
+
+    return {'ego': ego_only}
+
 def inference_late_fusion(batch_data, model, dataset):
     """
     Model inference for late fusion.
@@ -71,14 +135,23 @@ def inference_no_fusion(batch_data, model, dataset, single_gt=False):
     output_dict_ego = OrderedDict()
     if single_gt:
         batch_data = {'ego': batch_data['ego']}
-        
-    output_dict_ego['ego'] = model(batch_data['ego'])
+
+    model_batch_data = batch_data
+    if not hasattr(dataset, 'post_process_no_fusion'):
+        model_batch_data = _slice_intermediate_to_ego(batch_data)
+
+    output_dict_ego['ego'] = model(model_batch_data['ego'])
     # output_dict only contains ego
     # but batch_data havs all cavs, because we need the gt box inside.
 
-    pred_box_tensor, pred_score, gt_box_tensor = \
-        dataset.post_process_no_fusion(batch_data,  # only for late fusion dataset
-                             output_dict_ego)
+    if hasattr(dataset, 'post_process_no_fusion'):
+        pred_box_tensor, pred_score, gt_box_tensor = \
+            dataset.post_process_no_fusion(batch_data,  # only for late fusion dataset
+                                 output_dict_ego)
+    else:
+        post_process_batch = model_batch_data if single_gt else batch_data
+        pred_box_tensor, pred_score, gt_box_tensor = \
+            dataset.post_process(post_process_batch, output_dict_ego)
 
     return_dict = {"pred_box_tensor" : pred_box_tensor, \
                     "pred_score" : pred_score, \

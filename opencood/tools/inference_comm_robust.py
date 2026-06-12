@@ -1,4 +1,5 @@
 import argparse
+import importlib
 import os
 import time
 
@@ -33,9 +34,18 @@ def parser():
     parser.add_argument("--max_retransmissions", type=int, default=0)
     parser.add_argument("--packet_size", type=int, default=8)
     parser.add_argument("--loss_model", type=str, default="iid")
+    parser.add_argument("--base_latency_ms", type=float, default=0.0)
+    parser.add_argument("--retransmission_delay_ms", type=float, default=5.0)
+    parser.add_argument("--ge_good_to_bad", type=float, default=0.02)
+    parser.add_argument("--ge_bad_to_good", type=float, default=0.20)
+    parser.add_argument("--ge_good_loss", type=float, default=0.01)
+    parser.add_argument("--ge_bad_loss", type=float, default=0.50)
     parser.add_argument("--seed", type=int, default=303)
     parser.add_argument("--max_batches", type=int, default=None)
     parser.add_argument("--start_index", type=int, default=0)
+    parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--setting_name", type=str, default="")
+    parser.add_argument("--note", type=str, default="")
     return parser.parse_args()
 
 
@@ -44,25 +54,96 @@ def build_simulator_cfg(opt):
         "packet_size": opt.packet_size,
         "packet_loss_prob": opt.packet_loss_prob,
         "collaborator_dropout_prob": opt.collab_dropout_prob,
+        "base_latency_ms": opt.base_latency_ms,
         "queue_delay_mean_ms": opt.queue_delay_mean_ms,
         "jitter_std_ms": opt.jitter_std_ms,
         "deadline_ms": opt.deadline_ms,
         "max_retransmissions": opt.max_retransmissions,
+        "retransmission_delay_ms": opt.retransmission_delay_ms,
         "loss_model": opt.loss_model,
+        "ge_good_to_bad": opt.ge_good_to_bad,
+        "ge_bad_to_good": opt.ge_bad_to_good,
+        "ge_good_loss": opt.ge_good_loss,
+        "ge_bad_loss": opt.ge_bad_loss,
         "seed": opt.seed,
     }
+
+
+def apply_modal_config(hypes, modal):
+    modality_note = ""
+    if "heter" not in hypes:
+        return hypes, modality_note
+
+    mapping_dict = hypes["heter"]["mapping_dict"]
+    is_opv2v_like = (
+        "OPV2V" in hypes["test_dir"]
+        or "v2xsim" in hypes["test_dir"]
+        or "V2XSET" in hypes["test_dir"]
+    )
+
+    if modal == 0:
+        mapping_dict["m1"] = "m1"
+        mapping_dict["m2"] = "m1"
+        if is_opv2v_like:
+            mapping_dict["m3"] = "m1"
+            mapping_dict["m4"] = "m1"
+        hypes["heter"]["ego_modality"] = "m1"
+        hypes["model"]["args"]["ego_modality"] = "m1"
+        modality_note = "_lidaronly"
+    elif modal == 1:
+        mapping_dict["m1"] = "m2"
+        mapping_dict["m2"] = "m2"
+        if is_opv2v_like:
+            mapping_dict["m3"] = "m2"
+            mapping_dict["m4"] = "m2"
+        hypes["heter"]["ego_modality"] = "m2"
+        hypes["model"]["args"]["ego_modality"] = "m2"
+        modality_note = "_camonly"
+    elif modal == 2:
+        mapping_dict["m1"] = "m1"
+        mapping_dict["m2"] = "m2"
+        if is_opv2v_like:
+            mapping_dict["m3"] = "m2"
+            mapping_dict["m4"] = "m2"
+        hypes["heter"]["ego_modality"] = "m1"
+        hypes["model"]["args"]["ego_modality"] = "m1"
+        modality_note = "ego_lidar_other_cam"
+    elif modal == 3:
+        mapping_dict["m1"] = "m2"
+        mapping_dict["m2"] = "m1"
+        if is_opv2v_like:
+            mapping_dict["m3"] = "m1"
+            mapping_dict["m4"] = "m1"
+        hypes["heter"]["ego_modality"] = "m2"
+        hypes["model"]["args"]["ego_modality"] = "m2"
+        modality_note = "_ego_cam_other_lidar"
+    elif modal == 4:
+        mapping_dict["m1"] = "m1"
+        mapping_dict["m2"] = "m1" if is_opv2v_like else "m2"
+        if is_opv2v_like:
+            mapping_dict["m3"] = "m2"
+            mapping_dict["m4"] = "m2"
+        hypes["heter"]["ego_modality"] = "m1&m2"
+        modality_note = "ego_random_ratio0.5"
+    else:
+        raise ValueError(f"Unsupported modal: {modal}")
+
+    return hypes, modality_note
 
 
 def main():
     opt = parser()
     hypes = yaml_utils.load_yaml(None, opt)
+    hypes, modality_note = apply_modal_config(hypes, opt.modal)
 
     if opt.comm_thre is not None:
         hypes["model"]["args"]["fusion_backbone"]["communication"]["thre"] = opt.comm_thre
         hypes["model"]["args"]["fusion_backbone"]["communication"]["use_threshold"] = True
     if opt.comm_volume_MB is not None:
-        hypes["model"]["args"]["fusion_backbone"]["communication"]["comm_volume_MB"] = opt.comm_volume_MB
-        hypes["model"]["args"]["fusion_backbone"]["communication"]["use_threshold"] = False
+        fusion_backbone_cfg = hypes["model"]["args"]["fusion_backbone"]
+        fusion_backbone_cfg["comm_volume_MB"] = opt.comm_volume_MB
+        fusion_backbone_cfg["communication"]["comm_volume_MB"] = opt.comm_volume_MB
+        fusion_backbone_cfg["communication"]["use_threshold"] = False
 
     x_min, x_max = -eval(opt.range.split(",")[0]), eval(opt.range.split(",")[0])
     y_min, y_max = -eval(opt.range.split(",")[1]), eval(opt.range.split(",")[1])
@@ -82,6 +163,14 @@ def main():
             "gt_range": new_cav_range,
         },
     )
+    if "yaml_parser" in hypes:
+        yaml_utils_lib = importlib.import_module("opencood.hypes_yaml.yaml_utils")
+        hypes = getattr(yaml_utils_lib, hypes["yaml_parser"])(hypes)
+
+    hypes["time_delay"] = opt.time_delay
+    hypes["validate_dir"] = hypes["test_dir"]
+    if "OPV2V" in hypes["test_dir"] or "v2xsim" in hypes["test_dir"]:
+        assert "test" in hypes["validate_dir"]
 
     np.random.seed(opt.seed)
     torch.manual_seed(opt.seed)
@@ -120,11 +209,16 @@ def main():
     data_loader = DataLoader(
         opencood_dataset,
         batch_size=1,
-        num_workers=4,
+        num_workers=opt.num_workers,
         collate_fn=opencood_dataset.collate_batch_test,
         shuffle=False,
         pin_memory=False,
         drop_last=False,
+    )
+    print(
+        f"DataLoader ready: samples={len(opencood_dataset)}, num_workers={opt.num_workers}, "
+        f"max_batches={opt.max_batches}, start_index={opt.start_index}",
+        flush=True,
     )
 
     result_stat = {0.3: {"tp": [], "fp": [], "gt": 0, "score": []},
@@ -134,7 +228,10 @@ def main():
     total_comm_rates = []
     total_sim_stats = []
     model_times = []
-    infer_info = opt.fusion_method + "_commrobust"
+    range_tag = opt.range.replace(",", "_")
+    budget_tag = "threshold" if opt.comm_volume_MB is None else f"{opt.comm_volume_MB:g}MB"
+    infer_info = f"{opt.fusion_method}_commrobust{modality_note}_{range_tag}_{budget_tag}{opt.note}"
+    print(f"Start inference: {infer_info}", flush=True)
 
     for i, batch_data in enumerate(data_loader):
         if i < opt.start_index:
@@ -152,6 +249,12 @@ def main():
             robust_comm = getattr(model.pyramid_backbone, "naive_communication", None)
             if hasattr(robust_comm, "last_sim_stats"):
                 total_sim_stats.append(robust_comm.last_sim_stats)
+        if len(total_comm_rates) <= 5 or len(total_comm_rates) % 20 == 0:
+            print(
+                f"[{infer_info}] processed={len(total_comm_rates)} dataset_index={i} "
+                f"last_model_time={model_times[-1]:.4f}s",
+                flush=True,
+            )
 
         pred_box_tensor = infer_result["pred_box_tensor"]
         gt_box_tensor = infer_result["gt_box_tensor"]
@@ -170,8 +273,10 @@ def main():
             mean_sim_stats[key] = float(sum(values) / len(values))
     out_path = os.path.join(opt.model_dir, "comm_robust_result.txt")
     with open(out_path, "a+") as f:
+        note = f"modal {opt.modal} {modality_note}"
+        setting = opt.setting_name or opt.note.strip("_") or "unnamed"
         f.write(
-            f"Epoch: {resume_epoch} | AP @0.3: {ap30:.04f} | AP @0.5: {ap50:.04f} | AP @0.7: {ap70:.04f} | comm_rate: {comm_rates:.06f} | model_time: {model_time_av:.04f} | max_batches={opt.max_batches} | sim={simulator_cfg} | sim_stats={mean_sim_stats}\n"
+            f"setting: {setting} | {note} | Epoch: {resume_epoch} | AP @0.3: {ap30:.04f} | AP @0.5: {ap50:.04f} | AP @0.7: {ap70:.04f} | comm_rate: {comm_rates:.06f} | comm_volume_MB: {opt.comm_volume_MB} | range: {opt.range} | split: test | model_time: {model_time_av:.04f} | num_workers={opt.num_workers} | max_batches={opt.max_batches} | sim={simulator_cfg} | sim_stats={mean_sim_stats}\n"
         )
 
 

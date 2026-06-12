@@ -46,6 +46,10 @@ BlindMap introduces a new communication paradigm:
   - [x] [CodeFilling [CVPR 2024]](https://github.com/PhyllisH/CodeFilling.git)
 
 
+## Checkpoints
+
+Pretrained BlindMap checkpoints are available on Hugging Face: [Davinsteinsudas/BlindMap](https://huggingface.co/Davinsteinsudas/BlindMap).
+The checkpoint release includes model weights, configuration files, and source result logs; each checkpoint directory follows the OpenCOOD-style layout and can be passed directly as `--model_dir` for inference.
 
 ## Data Preparation
 - OPV2V: Please refer to [this repo](https://github.com/DerrickXuNu/OpenCOOD). 

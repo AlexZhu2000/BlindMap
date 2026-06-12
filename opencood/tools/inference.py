@@ -89,6 +89,8 @@ def test_parser():
     parser.add_argument("--time_delay", type=int, default=0, help="Time delay for the communication")
     parser.add_argument("--bandwidth", type=int, default=None, help="bandwidth limit in Mbps, 0: 1_10Mbps, 1: 10-30Mbps, 2: 30-50Mbps, 3: 50-100Mbps, 4: >100Mbps")
     parser.add_argument("--disable_vis", action="store_true", help="disable visualization during inference")
+    parser.add_argument("--num_workers", type=int, default=4, help="DataLoader worker number")
+    parser.add_argument("--max_batches", type=int, default=None, help="Optional debug limit for inference batches")
     opt = parser.parse_args()
     return opt
 
@@ -272,7 +274,7 @@ def main():
     # data_loader = DataLoader(opencood_dataset_subset,
     data_loader = DataLoader(opencood_dataset,
                             batch_size=1,
-                            num_workers=4,
+                            num_workers=opt.num_workers,
                             collate_fn=opencood_dataset.collate_batch_test,
                             shuffle=False,
                             pin_memory=False,
@@ -287,7 +289,10 @@ def main():
     infer_info = opt.fusion_method + opt.note
     model_times = []
     total_comm_rates = []
+    processed_batches = 0
     for i, batch_data in enumerate(data_loader):
+        if opt.max_batches is not None and processed_batches >= opt.max_batches:
+            break
         print(f"{infer_info}_{i}")
         if batch_data is None:
             continue
@@ -339,6 +344,7 @@ def main():
             else:
                 raise NotImplementedError('Only single, no, no_w_uncertainty, early, late and intermediate'
                                         'fusion is supported.')
+            processed_batches += 1
 
             pred_box_tensor = infer_result['pred_box_tensor']
             gt_box_tensor = infer_result['gt_box_tensor']
@@ -401,14 +407,15 @@ def main():
                                     vis_save_path,
                                     method='bev',
                                     left_hand=left_hand)
-                simple_vis.visualize_blindmap(infer_result,
-                                    batch_data['ego'][
-                                        'origin_lidar'][0],
-                                    hypes['postprocess']['gt_range'],
-                                    vis_save_path_blindmap,
-                                    method='bev',
-                                    left_hand=left_hand,
-                                    comm_volume_MB=current_comm_volume)
+                if infer_result.get("pred_blind_maps", None) is not None:
+                    simple_vis.visualize_blindmap(infer_result,
+                                        batch_data['ego'][
+                                            'origin_lidar'][0],
+                                        hypes['postprocess']['gt_range'],
+                                        vis_save_path_blindmap,
+                                        method='bev',
+                                        left_hand=left_hand,
+                                        comm_volume_MB=current_comm_volume)
         torch.cuda.empty_cache()
     if len(total_comm_rates) > 0:
         comm_rates = sum(total_comm_rates) / len(total_comm_rates)
@@ -430,6 +437,8 @@ def main():
                 msg += " | comm_volume_MB: {:.04f}".format(opt.comm_volume_MB)
             elif opt.comm_thre is not None:
                 msg += " | comm_thre: {:.04f}".format(opt.comm_thre)
+            if opt.max_batches is not None:
+                msg += " | max_batches: {}".format(opt.max_batches)
             
             _range = " |# " + opt.range + " | # "
             # Convert noise settings to string
