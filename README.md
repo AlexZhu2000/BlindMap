@@ -16,6 +16,20 @@ BlindMap instead lets each collaborator estimate the receiver-conditioned utilit
 
 ![BlindMap Teaser](images/intro_RESUBMIT.jpg)
 
+## Method Overview
+
+BlindMap differs from prior communication-efficient collaborative perception methods by modeling utility from the receiver perspective. Instead of asking each sender to decide what is locally salient, BlindMap estimates which sender features are likely to complement blind or weakly perceived regions of the ego vehicle under the current deadline.
+
+![Comparison with prior collaborative perception pipelines](images/related_works.jpg)
+
+The key observation is that high-confidence sender regions are not always high-value for the receiver. A feature is useful only when it contributes information that the ego vehicle lacks, so BlindMap prioritizes receiver-conditioned regions rather than sender-local responses alone.
+
+![Sender-centric versus receiver-conditioned region selection](images/sender-region%20cmp.jpg)
+
+BlindMap implements this idea with a lightweight utility prediction module and utility-guided feature transmission. The selected features are fused in a multi-scale BEV representation, improving perception quality while keeping communication bounded by the configured budget or deadline-aware bandwidth setting.
+
+![Receiver-conditioned utility modeling in BlindMap](images/system_utility.jpg)
+
 ## Repo Feature
 
 - Modality Support
