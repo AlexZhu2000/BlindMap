@@ -175,3 +175,5 @@ blindmap_visualization/
 docs/
 opencood/visualization/vis_output/
 huggingface_release/
+
+opencood/tools/run_*.sh
