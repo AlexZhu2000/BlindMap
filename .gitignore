@@ -177,3 +177,6 @@ opencood/visualization/vis_output/
 huggingface_release/
 
 opencood/tools/run_*.sh
+/*.fish
+/*.md
+/mayavi_test.png
