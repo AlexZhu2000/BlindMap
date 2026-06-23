@@ -1,20 +1,20 @@
-# BlindMap: Explicit Blind-Area Prediction and Request-Free Communication for Efficient Cooperative Perception
-This repository provides the official implementation of **BlindMap**, a new cooperative perception framework featuring **explicit blind-area prediction, request-free communication, and ultra-low collaboration latency**, accepted by **IEEE INFOCOM 2026**.
+# BlindMap: Deadline-Aware Collaborative Perception via Receiver-Conditioned Utility Modeling
+This repository provides the official implementation of **BlindMap**, a deadline-aware V2X collaborative perception framework based on **receiver-conditioned utility modeling**.
 
-BlindMap is designed for real-time, deadline-constrained V2X collaborative perception, addressing the two fundamental limitations of prior systems:
+BlindMap is designed to make collaborative perception useful under practical latency and bandwidth constraints. It addresses two limitations of prior systems:
 
-- Ego-centric region selection is inaccurate.
-Existing methods rely on uncertainty maps or attention—both ego-centric, unable to understand what is actually occluded from the ego viewpoint.
+- Sender-centric feature selection does not directly model receiver demand.
+Existing methods often transmit features according to local confidence or attention, which may not reflect what the ego vehicle actually needs in its blind or weakly perceived regions.
 
-- Communication depends on request-response loops.
-This tight coupling between ego perception → request → collaborator response makes global collaboration latency uncontrollable.
+- Request-response collaboration increases latency.
+Coupling ego perception, feature request, and collaborator response makes the freshness of shared information harder to guarantee under a deadline.
 
-BlindMap introduces a new communication paradigm:
+BlindMap instead lets each collaborator estimate the receiver-conditioned utility of its features and proactively transmit high-value spatial information:
 
->Collaborators proactively predict the ego’s blind areas → directly transmit useful features → no ego request needed.
+> Receiver-conditioned utility prediction -> utility-guided feature selection -> request-free collaborative fusion.
 
 
-![BlindMap Teaser](images/blindmap_intro_2.jpg)
+![BlindMap Teaser](images/intro_RESUBMIT.jpg)
 
 ## Repo Feature
 
@@ -49,7 +49,7 @@ BlindMap introduces a new communication paradigm:
 ## Checkpoints
 
 Pretrained BlindMap checkpoints are available on Hugging Face: [Davinsteinsudas/BlindMap](https://huggingface.co/Davinsteinsudas/BlindMap).
-The checkpoint release includes model weights, configuration files, and source result logs; each checkpoint directory follows the OpenCOOD-style layout and can be passed directly as `--model_dir` for inference.
+The checkpoint release includes model weights, configuration files, and selected quality records; each checkpoint directory follows the OpenCOOD-style layout and can be passed directly as `--model_dir` for inference.
 
 ## Data Preparation
 - OPV2V: Please refer to [this repo](https://github.com/DerrickXuNu/OpenCOOD). 
@@ -158,8 +158,10 @@ python opencood/tools/inference.py --model_dir ${CHECKPOINT_FOLDER} [--fusion_me
   - **late**: late fusion detection from all agents, all agents' fused gt box.  *[only for late fusion dataset]*
   - **early**: early fusion detection from all agents, all agents' fused gt box. *[only for early fusion dataset]*
   - **intermediate**: intermediate fusion detection from all agents, all agents' fused gt box. *[only for intermediate fusion dataset]*
-- `[--comm_volume_MB 1]`defaults to 1, meaning the communication payload is limited to 1 MB.
-- `[--comm_thre 0.1]` defaults to 0, meaning the model will select and transmit features whose communication confidence values are greater than 0.
+- `[--comm_volume_MB 1]` sets a fixed per-frame communication budget in MB. BlindMap uses this budget to retain features with higher receiver-conditioned utility.
+- `[--comm_thre 0.1]` overrides the utility/communication threshold in the loaded config. Features below this threshold are not transmitted.
+- `[--bandwidth]` optionally samples a bandwidth range and converts it to a per-frame payload budget for deadline-aware evaluation.
+- `[--time_delay]` and `[--noise]` evaluate stale communication and pose perturbation settings, respectively.
 ## Acknowledgements
 Thank for the excellent cooperative perception codebases [OpenCOOD](https://github.com/DerrickXuNu/OpenCOOD).
 
@@ -169,11 +171,11 @@ Thank for the excellent cooperative perception datasets [DAIR-V2X](https://thuda
 ## Citation
 ```
 
-@inproceedings{your2026blindmap,
-  title={BlindMap: Explicit Blind-Area Prediction and Request-Free Communication for Efficient Cooperative Perception},
-  author={Zhu, Zhenhan and Jiang, Yihang and Zhao, Yanchao},
-  booktitle={Proceedings of IEEE INFOCOM},
-  year={2026},
-  note={To appear}
+@article{zhu2026deadline,
+  title   = {Deadline-Aware Collaborative Perception via Receiver-Conditioned Utility Modeling},
+  author  = {Zhu, Zhenhan and Zhao, Yanchao and Jiang, Yihang and Han, Hao and Wu, Jie},
+  journal = {IEEE Transactions on Mobile Computing},
+  year    = {2026},
+  note    = {Manuscript under review}
 }
 ```
